@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MemoryForge - Digital Flip Book</title>
+    <link rel="icon"
+        href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>📚</text></svg>">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link
+        href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600&family=Playfair+Display:wght@600&family=Pacifico&family=Dancing+Script:wght@400;700&family=Great+Vibes&family=Satisfy&family=Caveat:wght@400;700&display=swap"
+        rel="stylesheet">
+    <link rel="stylesheet" href="./styles.css">
+    <script src="https://cdn.jsdelivr.net/npm/page-flip/dist/js/page-flip.browser.js"></script>
+</head>
+
+<body>
+    <div class="app-container">
+        <!-- Top Toolbar -->
+        <header class="top-toolbar">
+            <div class="toolbar-left">
+                <button id="toggle-albums-btn" class="icon-btn" title="Albums">📚</button>
+                <h1 class="app-title">MemoryForge</h1>
+            </div>
+            <div class="toolbar-center">
+                <button id="add-photo-btn" class="tool-btn">📷 Photo</button>
+                <button id="add-text-btn" class="tool-btn">✍️ Text</button>
+                <button id="add-sticker-btn" class="tool-btn">⭐ Sticker</button>
+            </div>
+            <div class="toolbar-right">
+                <!-- Page management removed - use album sidebar instead -->
+            </div>
+        </header>
+
+        <!-- Main Content Area -->
+        <main class="main-content">
+            <!-- Album Sidebar (collapsible) -->
+            <aside id="album-sidebar" class="album-sidebar">
+                <div id="album-list" class="album-list"></div>
+            </aside>
+
+            <!-- Flip Book Container -->
+            <div class="book-wrapper">
+                <div class="book-container">
+                    <button id="prev-btn" class="nav-btn nav-btn-left">❮</button>
+
+                    <div id="book"></div>
+
+                    <!-- Corner Blockers to reduce trigger area -->
+                    <div class="corner-blockers">
+                        <div class="blocker blocker-tl"></div>
+                        <div class="blocker blocker-tr"></div>
+                        <div class="blocker blocker-bl"></div>
+                        <div class="blocker blocker-br"></div>
+                    </div>
+
+                    <button id="next-btn" class="nav-btn nav-btn-right">❯</button>
+                </div>
+                <div class="book-info">
+                    <span id="page-info"></span>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- Hidden Inputs -->
+    <input type="file" id="photo-input" accept="image/*" hidden>
+    <input type="file" id="sticker-input" accept="image/*" hidden>
+    <input type="file" id="font-input" accept=".otf,.ttf" hidden>
+
+    <!-- Modal -->
+    <div id="modal" class="modal hidden">
+        <div class="modal-panel">
+            <div class="modal-header">
+                <h3 id="modal-title"></h3>
+                <button id="modal-close" class="modal-close">×</button>
+            </div>
+            <div id="modal-body" class="modal-body"></div>
+            <div class="modal-actions">
+                <button id="modal-cancel" class="ghost-btn">Cancel</button>
+                <button id="modal-confirm" class="primary-btn">Confirm</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="./app.js"></script>
+</body>
+
+</html>

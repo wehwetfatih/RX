@@ -1,0 +1,1767 @@
+const albumListEl = document.getElementById('album-list');
+const pageTitleEl = document.getElementById('page-title');
+const canvasEl = document.getElementById('page-canvas');
+const newPageBtn = document.getElementById('create-page-btn');
+const newAlbumBtn = document.getElementById('create-album-btn');
+const addTextBtn = document.getElementById('add-text-btn');
+const addStickerBtn = document.getElementById('add-sticker-btn');
+const addPhotoBtn = document.getElementById('add-photo-btn');
+const deletePageBtn = document.getElementById('delete-page-btn');
+const photoInput = document.getElementById('photo-input');
+const stickerInput = document.getElementById('sticker-input');
+const fontInput = document.getElementById('font-input');
+const contextMenu = document.getElementById('context-menu');
+const ctxDeleteBtn = document.getElementById('ctx-delete-page');
+const modalEl = document.getElementById('modal');
+const modalTitleEl = document.getElementById('modal-title');
+const modalBodyEl = document.getElementById('modal-body');
+const modalCloseBtn = document.getElementById('modal-close');
+const modalCancelBtn = document.getElementById('modal-cancel');
+const modalConfirmBtn = document.getElementById('modal-confirm');
+
+const state = {
+    albums: [],
+    pages: [],
+    activeAlbumId: null,
+    activePageId: null
+};
+
+const saveTimers = new Map();
+let contextTargetPageId = null;
+
+const EDGE_DRAG_ZONE = 150;
+const FLIP_DRAG_THRESHOLD = 50;
+const STICKER_LIBRARY = ['🌸', '✨', '🎀'];
+let CUSTOM_STICKERS = JSON.parse(localStorage.getItem('custom_stickers') || '[]');
+let CUSTOM_FONTS = JSON.parse(localStorage.getItem('custom_fonts') || '[]');
+
+const uid = () => crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+let modalConfirmHandler = null;
+let dragState = null;
+let blockZCounter = 10;
+
+const flipAudioTemplate = new Audio('./assets/page-flip.mp3');
+flipAudioTemplate.preload = 'auto';
+flipAudioTemplate.volume = 0.35;
+
+function playFlipSound() {
+    try {
+        const instance = flipAudioTemplate.cloneNode();
+        instance.volume = flipAudioTemplate.volume;
+        instance.play().catch(() => { });
+    } catch {
+        flipAudioTemplate.currentTime = 0;
+        flipAudioTemplate.play().catch(() => { });
+    }
+}
+
+function attachEvents() {
+    const sidebarToggle = document.getElementById('sidebar-toggle');
+    if (sidebarToggle) {
+        sidebarToggle.addEventListener('click', () => {
+            document.querySelector('.sidebar').classList.toggle('collapsed');
+        });
+    }
+
+    newPageBtn.addEventListener('click', showAddPageModal);
+    if (newAlbumBtn) {
+        newAlbumBtn.addEventListener('click', showAddAlbumModal);
+    }
+
+    addTextBtn.addEventListener('click', showAddTextModal);
+    if (addStickerBtn) {
+        addStickerBtn.addEventListener('click', showAddStickerModal);
+    }
+
+    addPhotoBtn.addEventListener('click', () => photoInput.click());
+
+    deletePageBtn.addEventListener('click', () => deleteActivePage());
+
+    pageTitleEl.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            pageTitleEl.blur();
+        }
+    });
+
+    pageTitleEl.addEventListener('input', () => {
+        const page = getActivePage();
+        if (!page) return;
+        page.title = pageTitleEl.textContent.trim();
+        scheduleSave(page.id);
+        renderAlbumList();
+    });
+
+    photoInput.addEventListener('change', async (event) => {
+        const file = event.target.files[0];
+        if (!file) return;
+
+        const reader = new FileReader();
+        reader.onload = async () => {
+            await addBlockToActivePage('photo', reader.result);
+        };
+        reader.readAsDataURL(file);
+        photoInput.value = '';
+    });
+
+    stickerInput.addEventListener('change', async (event) => {
+        const file = event.target.files[0];
+        if (!file) return;
+
+        const reader = new FileReader();
+        reader.onload = () => {
+            const dataUrl = reader.result;
+            CUSTOM_STICKERS.push(dataUrl);
+            localStorage.setItem('custom_stickers', JSON.stringify(CUSTOM_STICKERS));
+            // Re-open sticker modal to show new sticker
+            closeModal();
+            showAddStickerModal();
+        };
+        reader.readAsDataURL(file);
+        stickerInput.value = '';
+    });
+
+
+
+    fontInput.addEventListener('change', async (event) => {
+        const file = event.target.files[0];
+        if (!file) return;
+
+        const reader = new FileReader();
+        reader.onload = async () => {
+            const fontName = file.name.split('.')[0];
+            const fontData = reader.result;
+
+            try {
+                const fontFace = new FontFace(fontName, `url(${fontData})`);
+                await fontFace.load();
+                document.fonts.add(fontFace);
+
+                CUSTOM_FONTS.push({ name: fontName, data: fontData });
+                localStorage.setItem('custom_fonts', JSON.stringify(CUSTOM_FONTS));
+                alert(`Font "${fontName}" added!`);
+            } catch (e) {
+                console.error('Font load error:', e);
+                alert('Failed to load font.');
+            }
+        };
+        reader.readAsDataURL(file);
+        fontInput.value = '';
+    });
+
+    document.addEventListener('contextmenu', (event) => {
+        if (!state.activePageId) return;
+        const canvas = event.target.closest('#page-canvas');
+        if (!canvas) {
+            hideContextMenu();
+            return;
+        }
+
+        event.preventDefault();
+        contextTargetPageId = state.activePageId;
+        contextMenu.style.left = `${event.pageX}px`;
+        contextMenu.style.top = `${event.pageY}px`;
+        contextMenu.classList.remove('hidden');
+    });
+
+    contextMenu.addEventListener('click', (event) => event.stopPropagation());
+    document.addEventListener('click', hideContextMenu);
+    ctxDeleteBtn.addEventListener('click', () => {
+        hideContextMenu();
+        if (contextTargetPageId) {
+            deleteActivePage();
+        }
+    });
+
+    modalCloseBtn.addEventListener('click', closeModal);
+    modalCancelBtn.addEventListener('click', closeModal);
+    modalConfirmBtn.addEventListener('click', () => {
+        if (typeof modalConfirmHandler === 'function') {
+            modalConfirmHandler();
+        }
+    });
+}
+
+function hideContextMenu() {
+    if (!contextMenu) return;
+    contextMenu.classList.add('hidden');
+    contextTargetPageId = null;
+}
+
+async function loadAlbums() {
+    try {
+        const response = await fetch('/api/albums');
+
+        // Check if response is ok
+        if (!response.ok) {
+            throw new Error(`Server returned ${response.status}: ${response.statusText}`);
+        }
+
+        // Check if response has content
+        const contentType = response.headers.get('content-type');
+        if (!contentType || !contentType.includes('application/json')) {
+            throw new Error('Server did not return JSON. Check if the server is running correctly.');
+        }
+
+        // Get the response text first to check if it's empty
+        const text = await response.text();
+        if (!text || text.trim() === '') {
+            throw new Error('Server returned an empty response. Check database connection.');
+        }
+
+        // Parse the JSON
+        let data;
+        try {
+            data = JSON.parse(text);
+        } catch (parseError) {
+            console.error('JSON Parse Error. Response text:', text);
+            throw new Error(`Invalid JSON from server: ${parseError.message}`);
+        }
+
+        const albums = Array.isArray(data.albums) ? data.albums : [];
+
+        if (!albums.length) {
+            await createAlbumOnServer('First Album');
+            return loadAlbums();
+        }
+
+        const normalizedAlbums = albums
+            .map(album => ({
+                ...album,
+                pages: Array.isArray(album.pages)
+                    ? album.pages.sort((a, b) => a.position - b.position)
+                    : []
+            }))
+            .sort((a, b) => a.position - b.position);
+
+        const normalizedPages = [];
+        normalizedAlbums.forEach(album => {
+            album.pages = album.pages.map(page => {
+                const normalized = {
+                    ...page,
+                    content: Array.isArray(page.content) ? page.content : []
+                };
+                normalizedPages.push(normalized);
+                return normalized;
+            });
+        });
+
+        state.albums = normalizedAlbums;
+        state.pages = normalizedPages;
+        refreshBlockZCounter();
+
+        if (!state.activeAlbumId) {
+            state.activeAlbumId = state.albums[0]?.id || null;
+        }
+
+        const activeAlbum = getActiveAlbum();
+
+        if (!state.activePageId || !state.pages.some(p => p.id === state.activePageId)) {
+            const fallbackPage = activeAlbum?.pages?.[0] || state.pages[0];
+            if (fallbackPage) {
+                state.activePageId = fallbackPage.id;
+            }
+        }
+
+        if (activeAlbum && !activeAlbum.pages.length) {
+            const created = await createPage({ albumId: activeAlbum.id });
+            if (created) {
+                state.activePageId = created.id;
+            }
+        }
+
+        renderAlbumList();
+        renderCanvas();
+    } catch (error) {
+        console.error('Failed to load albums', error);
+        showCanvasError(`An error occurred while loading albums: ${error.message}`);
+    }
+}
+
+function renderAlbumList() {
+    albumListEl.innerHTML = '';
+    if (!state.albums.length) return;
+
+    state.albums
+        .sort((a, b) => a.position - b.position)
+        .forEach(album => {
+            const card = document.createElement('div');
+            card.className = `album-card${album.id === state.activeAlbumId ? ' active' : ''}`;
+
+            const header = document.createElement('div');
+            header.className = 'album-card__header';
+            header.innerHTML = `
+                <div>
+                    <p class="album-label">Album</p>
+                    <h4 class="album-card__title">${album.title || 'Untitled Album'}</h4>
+                </div>
+                <button class="album-add-btn">+ Page</button>
+            `;
+            header.addEventListener('click', () => {
+                state.activeAlbumId = album.id;
+                const firstPage = album.pages[0];
+                if (firstPage) {
+                    updateActivePage(firstPage.id, album.id);
+                } else {
+                    renderAlbumList();
+                    renderCanvas();
+                }
+            });
+
+            const addBtn = header.querySelector('.album-add-btn');
+            addBtn.addEventListener('click', (event) => {
+                event.stopPropagation();
+                createPage({ albumId: album.id });
+            });
+
+            const list = document.createElement('ul');
+            list.className = 'album-pages';
+
+            album.pages
+                .sort((a, b) => a.position - b.position)
+                .forEach((page, index) => {
+                    const li = document.createElement('li');
+                    li.className = `album-page${page.id === state.activePageId ? ' active' : ''}`;
+                    li.innerHTML = `
+                        <h4>${page.title || 'Untitled Page'}</h4>
+                        <span>${index === 0 ? 'Cover' : `Page ${index}`}</span>
+                    `;
+                    li.addEventListener('click', () => {
+                        updateActivePage(page.id, album.id);
+                    });
+                    list.appendChild(li);
+                });
+
+            card.appendChild(header);
+            card.appendChild(list);
+            albumListEl.appendChild(card);
+        });
+}
+
+function showCanvasError(message) {
+    canvasEl.innerHTML = `
+        <div class="empty-state">
+            <p class="empty-eyebrow" style="color: #e74c3c;">Error</p>
+            <h1>Something went wrong</h1>
+            <p>${message}</p>
+            <p style="margin-top: 1rem; font-size: 0.9rem; color: #666;">
+                Check the browser console for more details.
+            </p>
+        </div>
+    `;
+}
+
+async function renderCanvas() {
+    await flushPendingSaves();
+
+    const context = getCurrentSpreadContext();
+    const { spreads, spread, index } = context;
+    const activePage = getActivePage();
+    canvasEl.innerHTML = '';
+
+    if (!spread) {
+        canvasEl.innerHTML = `
+            <div class="empty-state">
+                <p class="empty-eyebrow">No pages available</p>
+                <h1>Create your first page</h1>
+                <p>Use the button on the left to add a new page and start your story.</p>
+            </div>
+        `;
+        pageTitleEl.textContent = '';
+        return;
+    }
+
+    const displayPage = activePage || pickPrimaryPage(spread);
+    pageTitleEl.textContent = displayPage?.title || 'Untitled Page';
+
+    const flipbook = document.createElement('div');
+    flipbook.className = 'flipbook';
+
+    const leftPage = document.createElement('div');
+    leftPage.className = 'book-page book-page--left';
+
+    const rightPage = document.createElement('div');
+    rightPage.className = 'book-page book-page--right';
+
+    renderPageSide(spread.left, leftPage, { side: 'left', isCover: spread.type === 'cover' });
+    renderPageSide(spread.right, rightPage, { side: 'right', isCover: spread.type === 'cover' });
+
+    flipbook.appendChild(leftPage);
+    const spiral = document.createElement('div');
+    spiral.className = 'spiral-binding';
+    flipbook.appendChild(spiral);
+    flipbook.appendChild(rightPage);
+    canvasEl.appendChild(flipbook);
+
+    const hasPrev = index > 0;
+    const hasNext = index < spreads.length - 1;
+
+    const navControls = document.createElement('div');
+    navControls.className = 'page-turn-controls';
+
+    const prevBtn = document.createElement('button');
+    prevBtn.className = 'page-turn-btn';
+    prevBtn.innerHTML = '&larr;';
+    prevBtn.disabled = !hasPrev;
+    prevBtn.addEventListener('click', () => flipToRelativeSpread(-1));
+
+    const nextBtn = document.createElement('button');
+    nextBtn.className = 'page-turn-btn';
+    nextBtn.innerHTML = '&rarr;';
+    nextBtn.disabled = !hasNext;
+    nextBtn.addEventListener('click', () => flipToRelativeSpread(1));
+
+    navControls.appendChild(prevBtn);
+    navControls.appendChild(nextBtn);
+    canvasEl.appendChild(navControls);
+
+    // Make both pages clickable to activate them
+    if (spread.left) {
+        leftPage.style.cursor = 'pointer';
+        leftPage.addEventListener('click', (e) => {
+            if (!e.target.closest('.page-block')) {
+                updateActivePage(spread.left.id, spread.left.albumId);
+            }
+        });
+    }
+
+    if (spread.right) {
+        rightPage.style.cursor = 'pointer';
+        rightPage.addEventListener('click', (e) => {
+            if (!e.target.closest('.page-block')) {
+                updateActivePage(spread.right.id, spread.right.albumId);
+            }
+        });
+    }
+
+    attachFlipbookDrag(flipbook, { hasPrev, hasNext });
+}
+
+function renderPageSide(page, element, { side, isCover }) {
+    element.innerHTML = '';
+    element.classList.toggle('book-page--cover', Boolean(isCover && side === 'right'));
+    element.classList.toggle('book-page--empty', !page);
+    element.classList.toggle('book-page--active', Boolean(page && page.id === state.activePageId));
+
+    if (!page) {
+        const empty = document.createElement('div');
+        empty.className = 'page-empty';
+        empty.innerHTML = `
+            <p class="empty-eyebrow">${isCover && side === 'right' ? 'Cover' : 'Blank Page'}</p>
+            <p>${isCover && side === 'right'
+                ? 'Pull from the right edge to reveal the first page.'
+                : 'Add new blocks to begin filling this page with memories.'}</p>
+        `;
+        element.appendChild(empty);
+        return;
+    }
+
+    const heading = document.createElement('div');
+    heading.className = 'page-heading';
+    heading.textContent = page.title || 'Untitled Page';
+    element.appendChild(heading);
+
+    const blocksWrapper = document.createElement('div');
+    blocksWrapper.className = 'page-blocks';
+    element.appendChild(blocksWrapper);
+
+    const content = Array.isArray(page.content) ? page.content : [];
+    if (!content.length) {
+        const placeholder = document.createElement('div');
+        placeholder.className = 'page-empty page-empty--inner';
+        placeholder.innerHTML = `
+            <p class="empty-eyebrow">${isCover ? 'Cover Page' : 'Blank Page'}</p>
+            <p>${isCover
+                ? 'Click "Add Photo" or "Add Text" to design your cover.'
+                : 'Add text or photos.'}</p>
+        `;
+        blocksWrapper.appendChild(placeholder);
+    }
+
+    // Continue rendering even if empty (especially for cover pages)
+
+    let layoutPatched = false;
+    let maxBottom = 0;
+
+    content.forEach(block => {
+        if (ensureBlockLayout(block)) {
+            layoutPatched = true;
+        }
+
+        const blockEl = document.createElement('div');
+        blockEl.className = `page-block page-block--${block.type}`;
+        blockEl.dataset.blockId = block.id;
+        applyBlockStyles(blockEl, block);
+
+        const actions = document.createElement('div');
+        actions.className = 'block-actions';
+
+        const rotateBtn = document.createElement('button');
+        rotateBtn.textContent = '↻';
+        rotateBtn.title = 'Döndür';
+        rotateBtn.style.cursor = 'grab';
+        enableBlockRotation(blockEl, block, page, rotateBtn);
+        actions.appendChild(rotateBtn);
+
+        const removeBtn = document.createElement('button');
+        removeBtn.textContent = '×';
+        removeBtn.title = 'Bloğu sil';
+        removeBtn.addEventListener('click', () => removeBlock(page.id, block.id));
+        actions.appendChild(removeBtn);
+        blockEl.appendChild(actions);
+
+        if (block.type === 'text') {
+            const textEl = document.createElement('div');
+            textEl.contentEditable = 'true';
+
+            // Handle both old (string) and new (object) format
+            let textContent = '';
+            let fontFamily = 'Playfair Display';
+
+            if (typeof block.value === 'string') {
+                textContent = block.value;
+            } else if (typeof block.value === 'object' && block.value !== null) {
+                textContent = block.value.text || '';
+                fontFamily = block.value.fontFamily || 'Playfair Display';
+            }
+
+            textEl.textContent = textContent || 'Metninizi girin...';
+            textEl.style.fontFamily = fontFamily;
+
+            // Calculate font size based on block height or use stored value
+            const blockHeight = block.height || 160;
+            const fontSize = block.fontSize || Math.max(12, Math.min(72, blockHeight / 8));
+            textEl.style.fontSize = `${fontSize}px`;
+            textEl.style.lineHeight = '1.4';
+
+            textEl.addEventListener('input', () => {
+                if (typeof block.value === 'object' && block.value !== null) {
+                    block.value.text = textEl.textContent;
+                } else {
+                    block.value = textEl.textContent;
+                }
+                scheduleSave(page.id);
+            });
+            blockEl.appendChild(textEl);
+        } else if (block.type === 'photo' && block.value) {
+            const img = document.createElement('img');
+            img.src = block.value;
+            img.alt = 'Yüklenen fotoğraf';
+            blockEl.appendChild(img);
+        } else if (block.type === 'sticker' && block.value) {
+            if (block.value.startsWith('data:image')) {
+                const img = document.createElement('img');
+                img.src = block.value;
+                img.style.width = '100%';
+                img.style.height = '100%';
+                img.style.objectFit = 'contain';
+                img.style.pointerEvents = 'none'; // Ensure drag works on container
+                blockEl.appendChild(img);
+            } else {
+                const stickerEl = document.createElement('span');
+                stickerEl.className = 'sticker-emoji';
+                stickerEl.textContent = block.value;
+                // Set initial font size based on height
+                const height = block.height || 180;
+                stickerEl.style.fontSize = `${height * 0.8}px`;
+                blockEl.appendChild(stickerEl);
+            }
+        }
+
+        const resizeHandle = document.createElement('div');
+        resizeHandle.className = 'block-resize-handle';
+        blockEl.appendChild(resizeHandle);
+
+        enableBlockDrag(blockEl, block, blocksWrapper, page);
+        enableBlockResize(blockEl, block, blocksWrapper, page, resizeHandle);
+
+        blocksWrapper.appendChild(blockEl);
+    });
+
+    // Keep page size fixed - don't adjust based on content
+    // blocksWrapper.style.minHeight is already set in CSS (600px)
+    if (layoutPatched) {
+        scheduleSave(page.id);
+    }
+}
+function getActiveAlbum() {
+    return state.albums.find((album) => album.id === state.activeAlbumId);
+}
+
+function getAlbumPages(albumId = state.activeAlbumId) {
+    const album = state.albums.find((alb) => alb.id === albumId);
+    return album ? album.pages || [] : [];
+}
+
+function getAlbumSpreads(albumId = state.activeAlbumId) {
+    const pages = getAlbumPages(albumId);
+    if (!pages.length) return [];
+
+    const spreads = [];
+    const [cover, ...rest] = pages;
+
+    if (cover) {
+        spreads.push({
+            type: 'cover',
+            left: null,
+            right: cover
+        });
+    }
+
+    for (let i = 0; i < rest.length; i += 2) {
+        const left = rest[i] || null;
+        const right = rest[i + 1] || null;
+        if (right || left) {
+            spreads.push({
+                type: 'spread',
+                left,
+                right
+            });
+        }
+    }
+
+    return spreads;
+}
+
+function pickPrimaryPage(spread, preferRight = true) {
+    if (!spread) return null;
+    return preferRight
+        ? (spread.right || spread.left || null)
+        : (spread.left || spread.right || null);
+}
+
+function getActivePage() {
+    return state.pages.find((p) => p.id === state.activePageId);
+}
+
+function getCurrentSpreadContext() {
+    const spreads = getAlbumSpreads();
+    if (!spreads.length) {
+        return { spreads: [], spread: null, index: -1 };
+    }
+
+    let index = spreads.findIndex(spread => {
+        const ids = [spread.left?.id, spread.right?.id].filter(Boolean);
+        return ids.includes(state.activePageId);
+    });
+
+    if (index === -1) {
+        index = 0;
+        const fallback = pickPrimaryPage(spreads[0]);
+        if (fallback) {
+            state.activePageId = fallback.id;
+            state.activeAlbumId = fallback.albumId;
+        }
+    }
+
+    return {
+        spreads,
+        spread: spreads[index],
+        index
+    };
+}
+
+function updateActivePage(pageId, albumId = null) {
+    if (albumId !== null) {
+        state.activeAlbumId = albumId;
+    }
+    state.activePageId = pageId;
+    renderAlbumList();
+    renderCanvas();
+}
+
+function syncAlbumPages(page) {
+    state.albums.forEach(album => {
+        if (!Array.isArray(album.pages)) {
+            album.pages = [];
+        }
+        if (album.id === page.albumId) {
+            return;
+        }
+        const idx = album.pages.findIndex(p => p.id === page.id);
+        if (idx > -1) {
+            album.pages.splice(idx, 1);
+        }
+    });
+
+    const album = state.albums.find(a => a.id === page.albumId);
+    if (!album) return;
+
+    const index = album.pages.findIndex(p => p.id === page.id);
+    if (index > -1) {
+        album.pages[index] = page;
+    } else {
+        album.pages.push(page);
+    }
+    album.pages.sort((a, b) => a.position - b.position);
+
+    if (page.id === state.activePageId) {
+        state.activeAlbumId = page.albumId;
+    }
+}
+
+function flipToRelativeSpread(offset) {
+    const { spreads, index } = getCurrentSpreadContext();
+    if (!spreads.length) return;
+
+    const targetIndex = index + offset;
+    if (targetIndex < 0 || targetIndex >= spreads.length) return;
+
+    const targetSpread = spreads[targetIndex];
+    const targetPage = pickPrimaryPage(targetSpread);
+    if (!targetPage) return;
+
+    const direction = offset > 0 ? 'right' : 'left';
+    animatePageTurn(targetPage, direction);
+}
+
+function animatePageTurn(targetPage, direction) {
+    const flipbookEl = canvasEl.querySelector('.flipbook');
+    playFlipSound();
+    if (!flipbookEl) {
+        updateActivePage(targetPage.id, targetPage.albumId);
+        return;
+    }
+
+    flipbookEl.classList.remove('flipbook--turn-left', 'flipbook--turn-right');
+    flipbookEl.classList.add(direction === 'right' ? 'flipbook--turn-right' : 'flipbook--turn-left');
+
+    setTimeout(() => {
+        flipbookEl.classList.remove('flipbook--turn-left', 'flipbook--turn-right');
+        updateActivePage(targetPage.id, targetPage.albumId);
+    }, 450);
+}
+
+function attachFlipbookDrag(flipbook, { hasPrev, hasNext }) {
+    if (!window.PointerEvent) {
+        return;
+    }
+
+    const clearPreview = () => {
+        flipbook.classList.remove('flipbook--preview');
+        flipbook.style.removeProperty('--flip-preview-angle');
+    };
+
+    const endDrag = (pointerId) => {
+        if (!dragState) return;
+        if (pointerId != null && typeof flipbook.releasePointerCapture === 'function') {
+            try {
+                flipbook.releasePointerCapture(pointerId);
+            } catch (err) {
+                // ignore
+            }
+        }
+        flipbook.classList.remove(
+            'flipbook--dragging',
+            'flipbook--dragging-left',
+            'flipbook--dragging-right',
+            'flipbook--preview'
+        );
+        flipbook.style.removeProperty('--flip-preview-angle');
+        dragState = null;
+    };
+
+    const onPointerDown = (event) => {
+        if (dragState) return;
+
+        const rect = flipbook.getBoundingClientRect();
+        const offsetX = event.clientX - rect.left;
+        let direction = null;
+
+        if (offsetX <= EDGE_DRAG_ZONE && hasPrev) {
+            direction = 'left';
+        } else if ((rect.width - offsetX) <= EDGE_DRAG_ZONE && hasNext) {
+            direction = 'right';
+        }
+
+        if (!direction) return;
+
+        dragState = {
+            pointerId: event.pointerId,
+            direction,
+            startX: event.clientX
+        };
+
+        if (typeof flipbook.setPointerCapture === 'function') {
+            try {
+                flipbook.setPointerCapture(event.pointerId);
+            } catch (err) {
+                // ignore
+            }
+        }
+        flipbook.classList.add('flipbook--dragging', `flipbook--dragging-${direction}`);
+    };
+
+    const onPointerMove = (event) => {
+        if (!dragState || dragState.pointerId !== event.pointerId) return;
+        const delta = event.clientX - dragState.startX;
+        let previewAngle = 0;
+
+        if (dragState.direction === 'right' && delta < 0) {
+            previewAngle = Math.min(160, Math.abs(delta) / 1.2);
+        } else if (dragState.direction === 'left' && delta > 0) {
+            previewAngle = Math.min(160, delta / 1.2);
+        } else {
+            previewAngle = 0;
+        }
+
+        if (previewAngle > 0) {
+            flipbook.style.setProperty('--flip-preview-angle', `${previewAngle}deg`);
+            flipbook.classList.add('flipbook--preview');
+        } else {
+            clearPreview();
+        }
+    };
+
+    const onPointerUp = (event) => {
+        if (!dragState || dragState.pointerId !== event.pointerId) return;
+        const delta = event.clientX - dragState.startX;
+        const direction = dragState.direction;
+
+        const shouldFlip = (
+            (direction === 'right' && delta <= -FLIP_DRAG_THRESHOLD) ||
+            (direction === 'left' && delta >= FLIP_DRAG_THRESHOLD)
+        );
+
+        endDrag(event.pointerId);
+
+        if (shouldFlip) {
+            flipToRelativeSpread(direction === 'right' ? 1 : -1);
+        } else {
+            clearPreview();
+        }
+    };
+
+    const onPointerCancel = (event) => {
+        if (!dragState || (event.pointerId && dragState.pointerId !== event.pointerId)) {
+            return;
+        }
+        endDrag(event.pointerId);
+        clearPreview();
+    };
+
+    flipbook.addEventListener('pointerdown', onPointerDown);
+    flipbook.addEventListener('pointermove', onPointerMove);
+    flipbook.addEventListener('pointerup', onPointerUp);
+    flipbook.addEventListener('pointercancel', onPointerCancel);
+    flipbook.addEventListener('pointerleave', (event) => {
+        if (!dragState || (event.pointerId && dragState.pointerId !== event.pointerId)) {
+            return;
+        }
+        endDrag(event.pointerId);
+        clearPreview();
+    });
+}
+async function createPage(options = {}) {
+    const {
+        title = 'New Page',
+        setActive = true,
+        albumId = state.activeAlbumId
+    } = options;
+
+    try {
+        const response = await fetch('/api/pages', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ title, content: [], albumId })
+        });
+        if (!response.ok) throw new Error('Page creation failed');
+        const data = await response.json();
+        const page = {
+            ...data.page,
+            content: Array.isArray(data.page.content) ? data.page.content : []
+        };
+
+        state.pages.push(page);
+        syncAlbumPages(page);
+        if (setActive) {
+            updateActivePage(page.id, page.albumId);
+        } else {
+            renderAlbumList();
+        }
+        return page;
+    } catch (error) {
+        console.error('Failed to create page', error);
+        alert('An error occurred while creating the page.');
+    }
+}
+
+async function deleteActivePage() {
+    const page = getActivePage();
+    if (!page) return;
+    if (state.pages.length <= 1) {
+        alert('En az bir sayfa kalmalı.');
+        return;
+    }
+
+    const confirmed = confirm(`${page.title || "bu sayfayı"} silmek istediğine emin misin?`);
+    if (!confirmed) return;
+
+    try {
+        const response = await fetch(`/api/pages/${page.id}`, { method: 'DELETE' });
+
+        if (!response.ok) {
+            const errorData = await response.json().catch(() => ({ error: 'Unknown error' }));
+            throw new Error(errorData.error || `Server returned ${response.status}`);
+        }
+
+        await loadAlbums();
+    } catch (error) {
+        console.error('Page silinemedi', error);
+        alert(`Sayfa silinemedi: ${error.message}`);
+    }
+}
+
+
+
+
+async function addBlockToActivePage(type, value) {
+    const page = getActivePage();
+    if (!page) return;
+
+    let options = {};
+    if (type === 'photo' && typeof value === 'string' && value.startsWith('data:image')) {
+        try {
+            const dims = await getImageDimensions(value);
+            // Scale down if too large, maintaining aspect ratio
+            const maxDim = 320;
+            let { width, height } = dims;
+            if (width > maxDim || height > maxDim) {
+                const ratio = width / height;
+                if (width > height) {
+                    width = maxDim;
+                    height = width / ratio;
+                } else {
+                    height = maxDim;
+                    width = height * ratio;
+                }
+            }
+            options = { width, height };
+        } catch (e) {
+            console.error('Failed to get image dimensions', e);
+        }
+    }
+
+    const block = createBlock(type, value, page, options);
+    page.content = Array.isArray(page.content) ? [...page.content, block] : [block];
+
+    renderCanvas();
+    scheduleSave(page.id);
+}
+
+function getImageDimensions(src) {
+    return new Promise((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => resolve({ width: img.naturalWidth, height: img.naturalHeight });
+        img.onerror = reject;
+        img.src = src;
+    });
+}
+
+function removeBlock(pageId, blockId) {
+    const page = state.pages.find(p => p.id === pageId);
+    if (!page) return;
+    page.content = page.content.filter(block => block.id !== blockId);
+    renderCanvas();
+    scheduleSave(page.id);
+}
+
+function applyBlockStyles(blockEl, block) {
+    blockEl.style.left = `${block.x || 0}px`;
+    blockEl.style.top = `${block.y || 0}px`;
+
+    // For text blocks, don't set width/height - let CSS fit-content work
+    if (block.type === 'text') {
+        // CSS handles sizing with fit-content
+    } else {
+        blockEl.style.width = `${block.width || 260}px`;
+        if (block.type === 'photo' || block.type === 'sticker') {
+            blockEl.style.height = `${block.height || 180}px`;
+        } else {
+            blockEl.style.minHeight = `${block.height || 140}px`;
+            blockEl.style.height = 'auto';
+        }
+    }
+    blockEl.style.zIndex = block.z || 1;
+
+    // Apply rotation if set
+    if (block.rotation) {
+        blockEl.style.transform = `rotate(${block.rotation}deg)`;
+    }
+}
+
+function enableBlockDrag(blockEl, block, container, page) {
+    blockEl.addEventListener('pointerdown', (event) => {
+        if (event.button !== 0) return;
+        if (event.target.closest('.block-actions') || event.target.classList.contains('block-resize-handle')) {
+            return;
+        }
+        if (event.target.closest('[contenteditable="true"]')) {
+            return;
+        }
+        event.preventDefault();
+        bringBlockToFront(blockEl, block);
+        const pointerId = event.pointerId;
+        const containerRect = container.getBoundingClientRect();
+        const blockRect = blockEl.getBoundingClientRect();
+        const offsetX = event.clientX - blockRect.left;
+        const offsetY = event.clientY - blockRect.top;
+        blockEl.classList.add('page-block--dragging');
+        if (blockEl.setPointerCapture) {
+            try {
+                blockEl.setPointerCapture(pointerId);
+            } catch (err) {
+                // ignore capture errors
+            }
+        }
+
+        const onMove = (moveEvent) => {
+            if (moveEvent.pointerId !== pointerId) return;
+            const maxLeft = Math.max(0, containerRect.width - blockRect.width);
+            const maxTop = Math.max(0, containerRect.height - blockRect.height);
+            const nextLeft = clamp(moveEvent.clientX - containerRect.left - offsetX, 0, maxLeft);
+            const nextTop = clamp(moveEvent.clientY - containerRect.top - offsetY, 0, maxTop);
+            blockEl.style.left = `${nextLeft}px`;
+            blockEl.style.top = `${nextTop}px`;
+        };
+
+        const release = () => {
+            blockEl.classList.remove('page-block--dragging');
+            block.x = parseFloat(blockEl.style.left) || 0;
+            block.y = parseFloat(blockEl.style.top) || 0;
+            if (page?.id) {
+                scheduleSave(page.id);
+            }
+        };
+
+        const onUp = (upEvent) => {
+            if (upEvent.pointerId !== pointerId) return;
+            cleanup();
+        };
+
+        const onCancel = (cancelEvent) => {
+            if (cancelEvent.pointerId && cancelEvent.pointerId !== pointerId) return;
+            cleanup();
+        };
+
+        const cleanup = () => {
+            if (blockEl.releasePointerCapture) {
+                try {
+                    blockEl.releasePointerCapture(pointerId);
+                } catch (err) {
+                    // ignore
+                }
+            }
+            window.removeEventListener('pointermove', onMove);
+            window.removeEventListener('pointerup', onUp);
+            window.removeEventListener('pointercancel', onCancel);
+            release();
+        };
+
+        window.addEventListener('pointermove', onMove);
+        window.addEventListener('pointerup', onUp);
+        window.addEventListener('pointercancel', onCancel);
+    });
+}
+
+function enableBlockResize(blockEl, block, container, page, handle) {
+    if (!handle) return;
+    handle.addEventListener('pointerdown', (event) => {
+        if (event.button !== 0) return;
+        event.preventDefault();
+        event.stopPropagation();
+        bringBlockToFront(blockEl, block);
+        const pointerId = event.pointerId;
+        if (handle.setPointerCapture) {
+            try {
+                handle.setPointerCapture(pointerId);
+            } catch (err) {
+                // ignore capture errors
+            }
+        }
+        blockEl.classList.add('page-block--resizing');
+
+        const containerRect = container.getBoundingClientRect();
+        const startWidth = blockEl.offsetWidth;
+        const startHeight = blockEl.offsetHeight;
+        const aspectRatio = startWidth / startHeight;
+        const startX = event.clientX;
+        const startY = event.clientY;
+
+        // Capture initial font size for text blocks
+        let startFontSize = 16;
+        if (block.type === 'text') {
+            const textEl = blockEl.querySelector('div[contenteditable="true"]');
+            if (textEl) {
+                startFontSize = parseFloat(window.getComputedStyle(textEl).fontSize) || 16;
+            }
+        }
+
+        const minWidth = block.type === 'sticker' ? 40 : 100;
+        const minHeight = block.type === 'sticker' ? 40 : 40;
+
+        const onMove = (moveEvent) => {
+            if (moveEvent.pointerId !== pointerId) return;
+            const deltaX = moveEvent.clientX - startX;
+
+            let newWidth, newHeight;
+
+            if (block.type === 'text') {
+                // Text resize logic (diagonal drag)
+                const deltaY = moveEvent.clientY - startY;
+                const dominantDelta = Math.abs(deltaX) > Math.abs(deltaY) ? deltaX : deltaY;
+
+                // Scale font size relative to start size
+                const newFontSize = Math.max(12, Math.min(120, startFontSize + (dominantDelta / 3)));
+
+                const textEl = blockEl.querySelector('div[contenteditable="true"]');
+                if (textEl) {
+                    textEl.style.fontSize = `${newFontSize}px`;
+                    block.fontSize = newFontSize; // Update block data immediately
+                }
+            } else {
+                // Sticker/Photo resize logic (maintain aspect ratio)
+                const maxWidth = Math.max(minWidth, containerRect.width - (block.x || 0));
+                newWidth = clamp(startWidth + deltaX, minWidth, maxWidth);
+                newHeight = newWidth / aspectRatio;
+
+                blockEl.style.width = `${newWidth}px`;
+                blockEl.style.height = `${newHeight}px`;
+
+                // Update sticker font size if applicable
+                const stickerEl = blockEl.querySelector('.sticker-emoji');
+                if (stickerEl) {
+                    stickerEl.style.fontSize = `${newHeight * 0.8}px`;
+                }
+            }
+        };
+
+        const release = () => {
+            blockEl.classList.remove('page-block--resizing');
+
+            if (block.type === 'text') {
+                const textEl = blockEl.querySelector('div[contenteditable="true"]');
+                if (textEl) {
+                    block.fontSize = parseFloat(textEl.style.fontSize);
+                }
+            } else {
+                block.width = parseFloat(blockEl.style.width) || blockEl.offsetWidth;
+                block.height = parseFloat(blockEl.style.height) || blockEl.offsetHeight;
+            }
+
+            if (page?.id) {
+                scheduleSave(page.id);
+            }
+        };
+
+        const cleanup = () => {
+            if (handle.releasePointerCapture) {
+                try {
+                    handle.releasePointerCapture(pointerId);
+                } catch (err) {
+                    // ignore
+                }
+            }
+            window.removeEventListener('pointermove', onMove);
+            window.removeEventListener('pointerup', onUp);
+            window.removeEventListener('pointercancel', onCancel);
+            release();
+        };
+
+        const onUp = (upEvent) => {
+            if (upEvent.pointerId !== pointerId) return;
+            cleanup();
+        };
+
+        const onCancel = (cancelEvent) => {
+            if (cancelEvent.pointerId && cancelEvent.pointerId !== pointerId) return;
+            cleanup();
+        };
+
+        window.addEventListener('pointermove', onMove);
+        window.addEventListener('pointerup', onUp);
+        window.addEventListener('pointercancel', onCancel);
+    });
+}
+
+function ensureBlockLayout(block) {
+    let updated = false;
+    if (typeof block.x !== 'number' || Number.isNaN(block.x)) {
+        block.x = 40 + Math.round(Math.random() * 140);
+        updated = true;
+    }
+    if (typeof block.y !== 'number' || Number.isNaN(block.y)) {
+        block.y = 40 + Math.round(Math.random() * 120);
+        updated = true;
+    }
+
+    const defaults = getBlockDefaults(block.type);
+    if (typeof block.width !== 'number' || Number.isNaN(block.width)) {
+        block.width = defaults.width;
+        updated = true;
+    }
+    if (typeof block.height !== 'number' || Number.isNaN(block.height)) {
+        block.height = defaults.height;
+        updated = true;
+    }
+
+    if (typeof block.z !== 'number' || Number.isNaN(block.z)) {
+        block.z = ++blockZCounter;
+        updated = true;
+    } else {
+        blockZCounter = Math.max(blockZCounter, block.z);
+    }
+
+    return updated;
+}
+
+function getBlockDefaults(type) {
+    if (type === 'photo') {
+        return { width: 320, height: 240 };
+    }
+    if (type === 'sticker') {
+        return { width: 140, height: 140 };
+    }
+    return { width: 320, height: 160 };
+}
+
+function createBlock(type, value, page, options = {}) {
+    const existingCount = Array.isArray(page?.content) ? page.content.length : 0;
+    const baseOffset = existingCount * 35;
+    const block = {
+        id: uid(),
+        type,
+        value,
+        x: 40 + (baseOffset % 200),
+        y: 40 + ((baseOffset / 2) % 180),
+        ...options
+    };
+    ensureBlockLayout(block);
+    return block;
+}
+
+function bringBlockToFront(blockEl, block) {
+    blockZCounter += 1;
+    block.z = blockZCounter;
+    blockEl.style.zIndex = block.z;
+}
+
+function clamp(value, min, max) {
+    if (max <= min) return min;
+    return Math.min(Math.max(value, min), max);
+}
+
+function refreshBlockZCounter() {
+    let maxZ = 10;
+    state.pages.forEach(page => {
+        (page.content || []).forEach(block => {
+            if (typeof block.z === 'number' && !Number.isNaN(block.z)) {
+                maxZ = Math.max(maxZ, block.z);
+            }
+        });
+    });
+    blockZCounter = maxZ;
+}
+
+function scheduleSave(pageId) {
+    if (saveTimers.has(pageId)) {
+        clearTimeout(saveTimers.get(pageId));
+    }
+
+    const timer = setTimeout(() => persistPage(pageId), 600);
+    saveTimers.set(pageId, timer);
+}
+
+async function flushPendingSaves() {
+    const pendingPageIds = Array.from(saveTimers.keys());
+    saveTimers.forEach(timer => clearTimeout(timer));
+    saveTimers.clear();
+
+    await Promise.all(pendingPageIds.map(pageId => persistPage(pageId)));
+}
+
+async function persistPage(pageId) {
+    const page = state.pages.find(p => p.id === pageId);
+    if (!page) return;
+
+    const payload = {
+        title: page.title || 'Untitled Page',
+        content: page.content || [],
+        position: page.position,
+        albumId: page.albumId
+    };
+
+    try {
+        const response = await fetch(`/api/pages/${page.id}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+
+        if (!response.ok) throw new Error('Save failed');
+        const data = await response.json();
+        const updated = data.page;
+
+        const index = state.pages.findIndex(p => p.id === page.id);
+        if (index > -1) {
+            state.pages[index] = updated;
+        }
+        syncAlbumPages(updated);
+        renderAlbumList();
+    } catch (error) {
+        console.error('Page kaydedilemedi', error);
+    }
+}
+
+function showCanvasError(message) {
+    canvasEl.innerHTML = `
+        <div class="empty-state">
+            <p class="empty-eyebrow">Hata</p>
+            <h1>${message}</h1>
+            <p>Lütfen bağlantı ayarlarını kontrol et.</p>
+        </div>
+    `;
+}
+
+function openModal({ title, content, confirmText = 'Confirm', onConfirm }) {
+    modalTitleEl.textContent = title;
+    modalBodyEl.innerHTML = '';
+    if (typeof content === 'string') {
+        modalBodyEl.innerHTML = content;
+    } else if (content instanceof HTMLElement) {
+        modalBodyEl.appendChild(content);
+    }
+    modalConfirmBtn.textContent = confirmText;
+    modalEl.classList.remove('hidden');
+    modalConfirmHandler = () => {
+        if (onConfirm) onConfirm();
+    };
+}
+
+function closeModal() {
+    modalEl.classList.add('hidden');
+    modalBodyEl.innerHTML = '';
+    modalConfirmHandler = null;
+}
+
+function showAddPageModal() {
+    const wrapper = document.createElement('div');
+    const label = document.createElement('label');
+    label.textContent = 'How many pages would you like to add?';
+    const input = document.createElement('input');
+    input.type = 'number';
+    input.min = '1';
+    input.max = '20';
+    input.value = '1';
+    input.addEventListener('input', () => input.classList.remove('input-error'));
+    wrapper.appendChild(label);
+    wrapper.appendChild(input);
+
+    const albumLabel = document.createElement('label');
+    albumLabel.textContent = 'Which album should they go into?';
+    const albumSelect = document.createElement('select');
+    state.albums.forEach(album => {
+        const option = document.createElement('option');
+        option.value = album.id;
+        option.textContent = album.title || 'Untitled Album';
+        if (album.id === state.activeAlbumId) {
+            option.selected = true;
+        }
+        albumSelect.appendChild(option);
+    });
+    wrapper.appendChild(albumLabel);
+    wrapper.appendChild(albumSelect);
+
+    openModal({
+        title: 'Add New Page',
+        content: wrapper,
+        confirmText: 'Add',
+        onConfirm: async () => {
+            const count = parseInt(input.value, 10);
+            if (Number.isNaN(count) || count < 1) {
+                input.focus();
+                input.classList.add('input-error');
+                return;
+            }
+            closeModal();
+            const targetAlbumId = Number(albumSelect.value) || state.activeAlbumId;
+            await addMultiplePages(count, targetAlbumId);
+        }
+    });
+    input.focus();
+}
+
+function showAddAlbumModal() {
+    const wrapper = document.createElement('div');
+    const label = document.createElement('label');
+    label.textContent = 'Album Name';
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.placeholder = 'e.g., Summer 2024';
+    wrapper.appendChild(label);
+    wrapper.appendChild(input);
+
+    openModal({
+        title: 'Create New Album',
+        content: wrapper,
+        confirmText: 'Create',
+        onConfirm: async () => {
+            const name = input.value.trim() || 'New Album';
+            closeModal();
+            const album = await createAlbum(name);
+            if (album) {
+                state.activeAlbumId = album.id;
+                renderAlbumList();
+                await createPage({ albumId: album.id });
+            }
+        }
+    });
+    input.focus();
+}
+async function addMultiplePages(count, albumId = state.activeAlbumId) {
+    const safeCount = Math.min(count, 20);
+    let lastPage = null;
+
+    for (let i = 0; i < safeCount; i++) {
+        const setActive = i === safeCount - 1;
+        lastPage = await createPage({ setActive, albumId });
+    }
+
+    if (count > 20) {
+        alert('You can add at most 20 pages at once. Repeat to add more.');
+    }
+
+    if (lastPage && safeCount > 1) {
+        state.activePageId = lastPage.id;
+        state.activeAlbumId = albumId;
+        renderAlbumList();
+        renderCanvas();
+    }
+}
+
+function showAddTextModal() {
+    const wrapper = document.createElement('div');
+    const label = document.createElement('label');
+    label.textContent = 'Text Content';
+    const textarea = document.createElement('textarea');
+    textarea.placeholder = 'Write your memory here...';
+    wrapper.appendChild(label);
+    wrapper.appendChild(textarea);
+
+    // Font Selection
+    const fontLabel = document.createElement('label');
+    fontLabel.textContent = 'Choose Font';
+    fontLabel.style.marginTop = '1rem';
+    fontLabel.style.display = 'block';
+    wrapper.appendChild(fontLabel);
+
+    const fontSelect = document.createElement('select');
+    fontSelect.style.width = '100%';
+    fontSelect.style.padding = '0.5rem';
+    fontSelect.style.borderRadius = '8px';
+    fontSelect.style.border = '1px solid #ccc';
+
+    const defaultFonts = ['Outfit', 'Playfair Display', 'Arial', 'Courier New', 'Georgia'];
+    defaultFonts.forEach(font => {
+        const option = document.createElement('option');
+        option.value = font;
+        option.textContent = font;
+        option.style.fontFamily = font;
+        fontSelect.appendChild(option);
+    });
+
+    if (CUSTOM_FONTS.length > 0) {
+        const group = document.createElement('optgroup');
+        group.label = 'Custom Fonts';
+        CUSTOM_FONTS.forEach(font => {
+            const option = document.createElement('option');
+            option.value = font.name;
+            option.textContent = font.name;
+            option.style.fontFamily = font.name;
+            group.appendChild(option);
+        });
+        fontSelect.appendChild(group);
+    }
+    wrapper.appendChild(fontSelect);
+
+    const uploadFontBtn = document.createElement('button');
+    uploadFontBtn.textContent = '+ Upload Font (OTF/TTF)';
+    uploadFontBtn.className = 'ghost-btn';
+    uploadFontBtn.style.fontSize = '0.8rem';
+    uploadFontBtn.style.marginTop = '0.5rem';
+    uploadFontBtn.addEventListener('click', () => fontInput.click());
+    wrapper.appendChild(uploadFontBtn);
+
+    openModal({
+        title: 'Add Text Block',
+        content: wrapper,
+        confirmText: 'Add',
+        onConfirm: async () => {
+            const text = textarea.value.trim();
+            if (!text.length) {
+                textarea.focus();
+                return;
+            }
+            closeModal();
+            await addBlockToActivePage('text', { text, fontFamily: fontSelect.value });
+        }
+    });
+    textarea.focus();
+}
+
+function showAddStickerModal() {
+    const wrapper = document.createElement('div');
+    wrapper.className = 'sticker-picker';
+
+    const hint = document.createElement('p');
+    hint.textContent = 'Pick a favorite sticker or write your own.';
+    wrapper.appendChild(hint);
+
+    const grid = document.createElement('div');
+    grid.className = 'sticker-grid';
+    wrapper.appendChild(grid);
+
+    let selected = null;
+
+    // Default Library
+    STICKER_LIBRARY.forEach((icon) => {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'sticker-option';
+        btn.textContent = icon;
+        btn.addEventListener('click', () => {
+            selected = icon;
+            Array.from(grid.children).forEach(child => child.classList.remove('selected'));
+            btn.classList.add('selected');
+        });
+        grid.appendChild(btn);
+    });
+
+    // Custom Stickers
+    CUSTOM_STICKERS.forEach((dataUrl, index) => {
+        const container = document.createElement('div');
+        container.style.position = 'relative';
+
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'sticker-option';
+        const img = document.createElement('img');
+        img.src = dataUrl;
+        img.style.width = '100%';
+        img.style.height = '100%';
+        img.style.objectFit = 'contain';
+        btn.appendChild(img);
+
+        btn.addEventListener('click', () => {
+            selected = dataUrl; // Use dataUrl as value
+            Array.from(grid.children).forEach(child => {
+                if (child.tagName === 'BUTTON') child.classList.remove('selected');
+                if (child.tagName === 'DIV') child.querySelector('button').classList.remove('selected');
+            });
+            btn.classList.add('selected');
+        });
+
+        const delBtn = document.createElement('button');
+        delBtn.textContent = '×';
+        delBtn.style.position = 'absolute';
+        delBtn.style.top = '-5px';
+        delBtn.style.right = '-5px';
+        delBtn.style.background = 'red';
+        delBtn.style.color = 'white';
+        delBtn.style.border = 'none';
+        delBtn.style.borderRadius = '50%';
+        delBtn.style.width = '18px';
+        delBtn.style.height = '18px';
+        delBtn.style.fontSize = '12px';
+        delBtn.style.cursor = 'pointer';
+        delBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            if (confirm('Delete this sticker?')) {
+                CUSTOM_STICKERS.splice(index, 1);
+                localStorage.setItem('custom_stickers', JSON.stringify(CUSTOM_STICKERS));
+                closeModal();
+                showAddStickerModal();
+            }
+        });
+
+        container.appendChild(btn);
+        container.appendChild(delBtn);
+        grid.appendChild(container);
+    });
+
+    // Upload Button
+    const uploadBtn = document.createElement('button');
+    uploadBtn.textContent = '+ Upload';
+    uploadBtn.className = 'ghost-btn';
+    uploadBtn.style.marginTop = '10px';
+    uploadBtn.addEventListener('click', () => stickerInput.click());
+    wrapper.appendChild(uploadBtn);
+
+    const customLabel = document.createElement('label');
+    customLabel.textContent = 'Or type your own sticker:';
+    wrapper.appendChild(customLabel);
+
+    const customInput = document.createElement('input');
+    customInput.type = 'text';
+    customInput.maxLength = 5;
+    customInput.placeholder = 'e.g., :) or <3';
+    customInput.addEventListener('input', () => customInput.classList.remove('input-error'));
+    wrapper.appendChild(customInput);
+
+    openModal({
+        title: 'Choose Sticker',
+        content: wrapper,
+        confirmText: 'Add',
+        onConfirm: async () => {
+            const manual = customInput.value.trim();
+            const value = manual || selected;
+            if (!value) {
+                customInput.classList.add('input-error');
+                customInput.focus();
+                return;
+            }
+            closeModal();
+            // Check if value is dataURL (image) or text
+            const type = value.startsWith('data:image') ? 'photo' : 'sticker';
+            // Note: We treat custom stickers as 'photo' blocks if they are images, or 'sticker' if emoji/text
+            // But user asked for "custom sticker", so maybe we should keep type as 'sticker' but handle image rendering?
+            // Existing code:
+            // if (block.type === 'sticker' && block.value) {
+            //    const stickerEl = document.createElement('span'); ...
+            // }
+            // We need to update render logic to handle image stickers if type is 'sticker'
+
+            await addBlockToActivePage('sticker', value);
+        }
+    });
+    customInput.focus();
+}
+
+async function createAlbum(name) {
+    try {
+        const album = await createAlbumOnServer(name);
+        if (!album) return null;
+        album.pages = [];
+        state.albums.push(album);
+        state.albums.sort((a, b) => a.position - b.position);
+        return album;
+    } catch (error) {
+        console.error('Album could not be created', error);
+        alert('An error occurred while creating the album.');
+    }
+}
+
+async function createAlbumOnServer(title) {
+    const response = await fetch('/api/albums', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title })
+    });
+    if (!response.ok) {
+        throw new Error('Album creation failed');
+    }
+    const data = await response.json();
+    return data.album;
+}
+
+async function initialize() {
+    // Load custom fonts
+    CUSTOM_FONTS.forEach(async (font) => {
+        try {
+            const fontFace = new FontFace(font.name, `url(${font.data})`);
+            await fontFace.load();
+            document.fonts.add(fontFace);
+        } catch (e) {
+            console.error('Failed to restore font', font.name, e);
+        }
+    });
+
+    await loadAlbums();
+    attachEvents();
+}
+
+initialize();
+
+
+function enableBlockRotation(blockEl, block, page, handle) {
+    if (!handle) return;
+
+    handle.addEventListener('pointerdown', (event) => {
+        if (event.button !== 0) return;
+        event.preventDefault();
+        event.stopPropagation();
+
+        const pointerId = event.pointerId;
+        if (handle.setPointerCapture) {
+            try {
+                handle.setPointerCapture(pointerId);
+            } catch (err) {
+                // ignore
+            }
+        }
+
+        handle.style.cursor = 'grabbing';
+        blockEl.classList.add('page-block--rotating');
+
+        // Calculate center of the block
+        const rect = blockEl.getBoundingClientRect();
+        const centerX = rect.left + rect.width / 2;
+        const centerY = rect.top + rect.height / 2;
+
+        // Calculate initial angle offset
+        // We want to maintain the relative angle between the mouse and the block's current rotation
+        const startAngle = Math.atan2(event.clientY - centerY, event.clientX - centerX);
+        const initialRotation = (block.rotation || 0) * (Math.PI / 180);
+        const angleOffset = startAngle - initialRotation;
+
+        const onMove = (moveEvent) => {
+            if (moveEvent.pointerId !== pointerId) return;
+
+            const currentAngle = Math.atan2(moveEvent.clientY - centerY, moveEvent.clientX - centerX);
+            let rotation = (currentAngle - angleOffset) * (180 / Math.PI);
+
+            // Normalize to 0-360
+            rotation = (rotation + 360) % 360;
+
+            block.rotation = rotation;
+            blockEl.style.transform = `rotate(${rotation}deg)`;
+        };
+
+        const release = () => {
+            handle.style.cursor = 'grab';
+            blockEl.classList.remove('page-block--rotating');
+            if (page?.id) {
+                scheduleSave(page.id);
+            }
+        };
+
+        const cleanup = () => {
+            if (handle.releasePointerCapture) {
+                try {
+                    handle.releasePointerCapture(pointerId);
+                } catch (err) {
+                    // ignore
+                }
+            }
+            window.removeEventListener('pointermove', onMove);
+            window.removeEventListener('pointerup', onUp);
+            window.removeEventListener('pointercancel', onCancel);
+            release();
+        };
+
+        const onUp = (upEvent) => {
+            if (upEvent.pointerId !== pointerId) return;
+            cleanup();
+        };
+
+        const onCancel = (cancelEvent) => {
+            if (cancelEvent.pointerId && cancelEvent.pointerId !== pointerId) return;
+            cleanup();
+        };
+
+        window.addEventListener('pointermove', onMove);
+        window.addEventListener('pointerup', onUp);
+        window.addEventListener('pointercancel', onCancel);
+    });
+}
+
