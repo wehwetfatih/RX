@@ -37,9 +37,10 @@ let contextTargetPageId = null;
 const EDGE_DRAG_ZONE = 150;
 const FLIP_DRAG_THRESHOLD = 50;
 const STICKER_LIBRARY = [];
-let CUSTOM_STICKERS = JSON.parse(localStorage.getItem('custom_stickers') || '[]');
-let CUSTOM_PHOTOS = JSON.parse(localStorage.getItem('custom_photos') || '[]');
-let CUSTOM_FONTS = JSON.parse(localStorage.getItem('custom_fonts') || '[]');
+
+let CUSTOM_STICKERS = [];
+let CUSTOM_PHOTOS = [];
+let CUSTOM_FONTS = [];
 
 const uid = () => crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 let modalConfirmHandler = null;
@@ -108,6 +109,100 @@ function normalizeAlbum(album) {
         pages
     };
 }
+
+/**
+ * SimpleDB: A wrapper for IndexedDB to store large assets.
+ */
+class SimpleDB {
+    constructor(dbName, version = 1) {
+        this.dbName = dbName;
+        this.version = version;
+        this.db = null;
+        this.stores = ['photos', 'stickers', 'fonts'];
+    }
+
+    onupgradeneeded(e) {
+        const db = e.target.result;
+        this.stores.forEach(store => {
+            if (!db.objectStoreNames.contains(store)) {
+                db.createObjectStore(store, { keyPath: 'id' });
+            }
+        });
+    }
+
+    async open() {
+        return new Promise((resolve, reject) => {
+            const request = indexedDB.open(this.dbName, this.version);
+            request.onupgradeneeded = this.onupgradeneeded.bind(this);
+            request.onsuccess = (e) => {
+                this.db = e.target.result;
+                resolve(this.db);
+            };
+            request.onerror = (e) => reject('IndexedDB error: ' + e.target.error);
+        });
+    }
+
+    async getAll(storeName) {
+        return new Promise((resolve, reject) => {
+            if (!this.db) return reject('DB not active');
+            const tx = this.db.transaction(storeName, 'readonly');
+            const store = tx.objectStore(storeName);
+            const request = store.getAll();
+            request.onsuccess = () => {
+                // Return just the values (base64 strings or objects)
+                // We wrap them in objects {id, value}
+                resolve(request.result.map(item => item.value));
+            };
+            request.onerror = () => reject(request.error);
+        });
+    }
+
+    async add(storeName, value) {
+        return new Promise((resolve, reject) => {
+            if (!this.db) return reject('DB not active');
+            const tx = this.db.transaction(storeName, 'readwrite');
+            const store = tx.objectStore(storeName);
+            // Use current timestamp + random as ID
+            const id = Date.now().toString() + Math.random().toString().slice(2, 6);
+            const request = store.add({ id, value });
+            request.onsuccess = () => resolve(id);
+            request.onerror = () => reject(request.error);
+        });
+    }
+
+    async deleteByValue(storeName, value) {
+        return new Promise((resolve, reject) => {
+            if (!this.db) return reject('DB not active');
+            const tx = this.db.transaction(storeName, 'readwrite');
+            const store = tx.objectStore(storeName);
+
+            // We have to iterate to find the ID if we only have the value
+            // This is slightly inefficient but fine for valid lists
+            // Alternatively, we could restructure how we track these items in app state (track IDs)
+            // For now, let's look it up.
+            let keyToDelete = null;
+            const cursorReq = store.openCursor();
+
+            cursorReq.onsuccess = (e) => {
+                const cursor = e.target.result;
+                if (cursor) {
+                    if (cursor.value.value === value) {
+                        cursor.delete();
+                        resolve();
+                    } else {
+                        cursor.continue();
+                    }
+                } else {
+                    // Not found
+                    resolve();
+                }
+            };
+            cursorReq.onerror = () => reject(cursorReq.error);
+        });
+    }
+}
+
+const memoryDB = new SimpleDB('MemoryForgeDB');
 
 const flipAudioTemplate = new Audio('./assets/page-flip.mp3');
 flipAudioTemplate.preload = 'auto';
@@ -193,14 +288,14 @@ function attachEvents() {
             // 3. Update State - Add to beginning
             CUSTOM_PHOTOS.unshift(dataUrl);
 
-            // 4. Try to save to LocalStorage
+            // 4. Save to IndexedDB
             try {
-                localStorage.setItem('custom_photos', JSON.stringify(CUSTOM_PHOTOS));
+                await memoryDB.add('photos', dataUrl);
             } catch (e) {
-                console.error('Storage full:', e);
-                // Remove the item we just added since we can't save it
+                console.error('DB save failed:', e);
+                // Remove from local state if save failed
                 CUSTOM_PHOTOS.shift();
-                alert('Storage is full! Could not save photo to sidebar permanently. Try deleting some old items.');
+                alert('Could not save photo to database: ' + e.message);
                 return;
             }
 
@@ -220,10 +315,16 @@ function attachEvents() {
         if (!file) return;
 
         const reader = new FileReader();
-        reader.onload = () => {
+        reader.onload = async () => {
             const dataUrl = reader.result;
             CUSTOM_STICKERS.unshift(dataUrl);
-            localStorage.setItem('custom_stickers', JSON.stringify(CUSTOM_STICKERS));
+            try {
+                await memoryDB.add('stickers', dataUrl);
+            } catch (e) {
+                console.error('DB save sticker failed:', e);
+                CUSTOM_STICKERS.shift();
+                alert('Failed to save sticker.');
+            }
 
             // If sidebar is showing stickers, refresh it
             if (state.sidebarMode === 'stickers') {
@@ -269,15 +370,17 @@ function attachEvents() {
                 document.fonts.add(fontFace);
                 console.log('Font added to document');
 
-                CUSTOM_FONTS.push({ name: fontName, data: fontData });
-                try {
-                    localStorage.setItem('custom_fonts', JSON.stringify(CUSTOM_FONTS));
-                } catch (storageError) {
-                    console.error('LocalStorage failed (likely full):', storageError);
-                    alert('Font loaded but could not be saved permanently (Storage Full).');
-                }
+                const fontObj = { name: fontName, data: fontData };
+                CUSTOM_FONTS.push(fontObj);
 
-                alert(`Font "${fontName}" added!`);
+                try {
+                    await memoryDB.add('fonts', fontObj);
+                    alert(`Font "${fontName}" added!`);
+                } catch (storageError) {
+                    console.error('DB save font failed:', storageError);
+                    CUSTOM_FONTS.pop();
+                    alert('Font loaded temporarily but could not be saved to DB.');
+                }
             } catch (e) {
                 console.error('Font load error details:', e);
                 alert(`Failed to load font: ${e.message}`);
@@ -582,6 +685,20 @@ function renderStickerContent(container) {
             item.style.justifyContent = 'center';
         }
 
+        // Check if this sticker is already used in any page
+        const isUsed = state.albums.some(album =>
+            Array.isArray(album.pages) && album.pages.some(page =>
+                Array.isArray(page.content) && page.content.some(block =>
+                    block.type === 'sticker' && block.value === value
+                )
+            )
+        );
+
+        if (isUsed) {
+            item.classList.add('used');
+            item.title = "This sticker is already in your booklet";
+        }
+
         item.addEventListener('dragstart', (e) => {
             e.dataTransfer.setData('application/json', JSON.stringify({
                 type: 'sticker',
@@ -637,7 +754,8 @@ function renderStickerContent(container) {
                     const index = CUSTOM_STICKERS.indexOf(value);
                     if (index > -1) {
                         CUSTOM_STICKERS.splice(index, 1);
-                        localStorage.setItem('custom_stickers', JSON.stringify(CUSTOM_STICKERS));
+                        // localStorage.setItem('custom_stickers', JSON.stringify(CUSTOM_STICKERS));
+                        memoryDB.deleteByValue('stickers', value).catch(err => console.error('DB delete sticker failed', err));
                         renderSidebar(); // Re-render sidebar to update the list
                     }
                 }
@@ -715,6 +833,20 @@ function renderPhotoContent(container) {
             const img = document.createElement('img');
             img.src = value;
             item.appendChild(img);
+
+            // Check if this photo is already used in any page
+            const isUsed = state.albums.some(album =>
+                Array.isArray(album.pages) && album.pages.some(page =>
+                    Array.isArray(page.content) && page.content.some(block =>
+                        block.type === 'photo' && block.value === value
+                    )
+                )
+            );
+
+            if (isUsed) {
+                item.classList.add('used');
+                item.title = "This photo is already in your booklet";
+            }
         }
 
         item.addEventListener('dragstart', (e) => {
@@ -772,7 +904,8 @@ function renderPhotoContent(container) {
                     const index = CUSTOM_PHOTOS.indexOf(value);
                     if (index > -1) {
                         CUSTOM_PHOTOS.splice(index, 1);
-                        localStorage.setItem('custom_photos', JSON.stringify(CUSTOM_PHOTOS));
+                        // localStorage.setItem('custom_photos', JSON.stringify(CUSTOM_PHOTOS));
+                        memoryDB.deleteByValue('photos', value).catch(err => console.error('DB delete photo failed', err));
                         renderSidebar(); // Re-render sidebar to update the list
                     }
                 }
@@ -2527,8 +2660,72 @@ async function createAlbumOnServer(title = 'New Album') {
     return response?.album || null;
 }
 
+async function loadAndMigrateAssets() {
+    try {
+        console.log('DB: Opening database...');
+        await memoryDB.open();
+
+        // 1. Check for legacy data in localStorage
+        const legacyPhotos = JSON.parse(localStorage.getItem('custom_photos') || '[]');
+        const legacyStickers = JSON.parse(localStorage.getItem('custom_stickers') || '[]');
+        const legacyFonts = JSON.parse(localStorage.getItem('custom_fonts') || '[]');
+
+        // 2. Migrate Photos
+        if (legacyPhotos.length > 0) {
+            console.log(`DB: Migrating ${legacyPhotos.length} photos...`);
+            for (const p of legacyPhotos) {
+                await memoryDB.add('photos', p);
+            }
+            localStorage.removeItem('custom_photos');
+            console.log('DB: Photos migrated.');
+        }
+
+        // 3. Migrate Stickers
+        if (legacyStickers.length > 0) {
+            console.log(`DB: Migrating ${legacyStickers.length} stickers...`);
+            for (const s of legacyStickers) {
+                await memoryDB.add('stickers', s);
+            }
+            localStorage.removeItem('custom_stickers');
+            console.log('DB: Stickers migrated.');
+        }
+
+        // 4. Migrate Fonts
+        if (legacyFonts.length > 0) {
+            console.log(`DB: Migrating ${legacyFonts.length} fonts...`);
+            for (const f of legacyFonts) {
+                await memoryDB.add('fonts', f);
+            }
+            localStorage.removeItem('custom_fonts');
+            console.log('DB: Fonts migrated.');
+        }
+
+        // 5. Load everything into memory
+        CUSTOM_PHOTOS = await memoryDB.getAll('photos');
+        CUSTOM_STICKERS = await memoryDB.getAll('stickers');
+        const dbFonts = await memoryDB.getAll('fonts');
+
+        // Fonts need special object shape handling if we stored them strangely
+        // But legacyFonts stores {name, data}. 
+        // Our getAll returns values. So it should be array of {name, data} objects?
+        // Wait, getAll returns just the 'value' property from our add method? 
+        // Yes: resolve(request.result.map(item => item.value));
+        // So dbFonts is array of {name, data}.
+        CUSTOM_FONTS = dbFonts;
+
+        console.log(`DB: Loaded assets: ${CUSTOM_PHOTOS.length} photos, ${CUSTOM_STICKERS.length} stickers, ${CUSTOM_FONTS.length} fonts.`);
+
+    } catch (e) {
+        console.error('DB: Asset loading/migration failed', e);
+        alert('Database error. Your custom items might not appear.');
+    }
+}
+
 async function initialize() {
     console.log('App: initialize() called');
+
+    // Initialize DB and assets first
+    await loadAndMigrateAssets();
 
     // Check if page-flip.js loaded
     if (typeof St === 'undefined') {

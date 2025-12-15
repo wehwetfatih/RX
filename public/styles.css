@@ -6,7 +6,7 @@
     --text: #2b2738;
     --muted: #8d8aa6;
     --bg: #f5f7fa;
-    --paper: #fffdf9;
+    --paper: #ffffff;
     font-family: 'Outfit', sans-serif;
 }
 
@@ -17,11 +17,16 @@
 }
 
 body {
-    background: var(--bg);
+    /* Custom background image */
+    background: url('./assets/ChirsmastTheme.png');
+    background-size: cover;
+    background-position: center top;
+    background-repeat: no-repeat;
+    background-attachment: fixed;
     color: var(--text);
     height: 100vh;
     overflow: hidden;
-    /* Prevent global scroll */
+    position: relative;
 }
 
 /* ===== APP CONTAINER ===== */
@@ -292,10 +297,14 @@ body {
     align-items: center;
     justify-content: center;
     padding: 0.5rem;
-    background: linear-gradient(135deg, #f5f7fa 0%, #e4e9f2 100%);
+    /* Transparent - only show the body background image */
+    background: transparent;
     width: 100%;
     transition: all 0.3s ease;
+    position: relative;
 }
+
+
 
 .book-container {
     position: relative;
@@ -304,6 +313,8 @@ body {
     justify-content: center;
     perspective: 2000px;
     min-height: 600px;
+    /* Add warm glow around the book */
+    filter: drop-shadow(0 10px 40px rgba(255, 200, 100, 0.3));
 }
 
 /* Corner Blockers to reduce flip trigger sensitivity */
@@ -320,9 +331,9 @@ body {
 
 .blocker {
     position: absolute;
-    width: 150px;
+    width: 20px;
     /* Larger blocker area */
-    height: 150px;
+    height: 20px;
     pointer-events: auto;
     /* Block events */
     /* Block events */
@@ -367,9 +378,12 @@ body {
 /* ===== PAGE STYLES ===== */
 .page {
     background: var(--paper);
-    background-image: url('./assets/paper_texture.jpg');
+    background-image: url('./assets/craft.jpg');
     background-size: cover;
-    box-shadow: 0 0 20px rgba(0, 0, 0, 0.1);
+    /* Enhanced shadow for more depth/shader effect */
+    box-shadow:
+        0 5px 15px rgba(0, 0, 0, 0.25),
+        0 15px 35px rgba(0, 0, 0, 0.2);
     overflow: hidden;
 }
 
@@ -779,6 +793,31 @@ body {
     pointer-events: none;
     border: 5px solid white;
     box-shadow: 2px 2px 5px rgba(0, 0, 0, 0.2);
+}
+
+/* Used photo indicator */
+.sticker-item-sidebar.used {
+    border-color: #4CAF50;
+    position: relative;
+    opacity: 0.6;
+}
+
+.sticker-item-sidebar.used::after {
+    content: '✓';
+    position: absolute;
+    bottom: 5px;
+    right: 5px;
+    background: #4CAF50;
+    color: white;
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 12px;
+    font-weight: bold;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
 }
 
 /* Back button for sidebar */
