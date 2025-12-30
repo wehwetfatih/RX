@@ -101,47 +101,58 @@ router.put('/:id', async (req, res) => {
     }
 
     try {
-        const title = typeof req.body?.title === 'string' ? req.body.title.trim() : 'Untitled Page';
-        const content = JSON.stringify(parseContent(req.body?.content));
-        const incomingPosition = Number.isInteger(req.body?.position) ? req.body.position : null;
-        const requestedAlbum = Number(req.body?.albumId);
-        const incomingAlbum = Number.isInteger(requestedAlbum) && requestedAlbum > 0
-            ? requestedAlbum
-            : null;
+        // Collect updates conditionally
+        const updates = {};
 
-        let resolvedAlbumId = null;
-        let resolvedPosition = incomingPosition;
+        if (req.body.title !== undefined) {
+            updates.title = typeof req.body.title === 'string' ? req.body.title.trim() : 'Untitled Page';
+        }
+
+        if (req.body.content !== undefined) {
+            updates.content = JSON.stringify(parseContent(req.body.content));
+        }
+
+        const incomingPosition = Number.isInteger(req.body.position) ? req.body.position : null;
+        if (incomingPosition !== null) {
+            updates.position = incomingPosition;
+        }
+
+        const requestedAlbum = Number(req.body.albumId);
+        const incomingAlbum = Number.isInteger(requestedAlbum) && requestedAlbum > 0 ? requestedAlbum : null;
 
         if (incomingAlbum !== null) {
-            resolvedAlbumId = await resolveAlbumId(incomingAlbum);
-            if (resolvedPosition === null) {
+            const resolvedAlbumId = await resolveAlbumId(incomingAlbum);
+            updates.album_id = resolvedAlbumId;
+
+            // If moving to a new album and position not specified, append to end
+            if (updates.position === undefined) {
                 const nextRows = await sql`
                     SELECT COALESCE(MAX(position), 0) + 1 AS next_pos
                     FROM public.pages
                     WHERE album_id = ${resolvedAlbumId}
                 `;
-                resolvedPosition = nextRows[0]?.next_pos || 1;
+                updates.position = nextRows[0]?.next_pos || 1;
             }
         }
 
-        const assignments = ['title = $1', 'content = $2'];
-        const params = [title || 'Untitled Page', content];
-
-        if (resolvedPosition !== null) {
-            assignments.push(`position = $${assignments.length + 1}`);
-            params.push(resolvedPosition);
+        const keys = Object.keys(updates);
+        if (keys.length === 0) {
+            return res.status(400).json({ error: 'No valid fields to update' });
         }
 
-        if (resolvedAlbumId !== null) {
-            assignments.push(`album_id = $${assignments.length + 1}`);
-            params.push(resolvedAlbumId);
-        }
+        const assignments = [];
+        const params = [];
 
-        params.push(id);
-        const setClause = assignments.join(', ');
+        keys.forEach((key, index) => {
+            assignments.push(`${key} = $${index + 1}`);
+            params.push(updates[key]);
+        });
+
+        params.push(id); // ID is the last param
+
         const query = `
             UPDATE public.pages
-            SET ${setClause}
+            SET ${assignments.join(', ')}
             WHERE id = $${params.length}
             RETURNING id, title, content, position, album_id;
         `;
@@ -163,7 +174,11 @@ router.put('/:id', async (req, res) => {
         });
     } catch (error) {
         console.error('PUT /api/pages/:id failed:', error);
-        res.status(500).json({ error: 'Unable to update page' });
+        res.status(500).json({
+            error: 'Unable to update page',
+            details: error.message,
+            code: error.code
+        });
     }
 });
 

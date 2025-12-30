@@ -14,7 +14,7 @@ app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 
 // Middleware: If database is not configured, return 501 for API routes
-app.use('/api/*', (req, res, next) => {
+app.use('/api', (req, res, next) => {
     if (!sql) {
         return res.status(501).json({
             error: 'Database not configured',
@@ -30,7 +30,7 @@ app.use('/api/albums', albumsRouter);
 const publicDir = path.join(__dirname, '..', 'public');
 app.use(express.static(publicDir));
 
-app.get('*', (req, res) => {
+app.get(/.*/, (req, res) => {
     res.sendFile(path.join(publicDir, 'index.html'));
 });
 

@@ -1,0 +1,813 @@
+/* ===== CSS VARIABLES ===== */
+:root {
+    --primary: #7a5af8;
+    --primary-dark: #5c3ccf;
+    --danger: #ef476f;
+    --text: #2b2738;
+    --muted: #8d8aa6;
+    --bg: #f5f7fa;
+    --paper: #ffffff;
+    font-family: 'Outfit', sans-serif;
+}
+
+* {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+body {
+    /* Custom background image */
+    background: url('./assets/Chrtm.png');
+    background-size: cover;
+    background-position: center top;
+    background-repeat: no-repeat;
+    background-attachment: fixed;
+    color: var(--text);
+    height: 100vh;
+    overflow: hidden;
+    position: relative;
+}
+
+/* ===== APP CONTAINER ===== */
+.app-container {
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+    overflow: hidden;
+}
+
+/* ===== TOP TOOLBAR ===== */
+.top-toolbar {
+    background: white;
+    border-bottom: 1px solid #e0e0e0;
+    padding: 1rem 2rem;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 2rem;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+    z-index: 100;
+    flex-shrink: 0;
+    /* Prevent toolbar shrinking */
+}
+
+.toolbar-left,
+.toolbar-center,
+.toolbar-right {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+}
+
+.app-title {
+    font-size: 1.5rem;
+    font-weight: 600;
+    color: var(--primary);
+    margin: 0;
+}
+
+.icon-btn {
+    background: none;
+    border: none;
+    font-size: 1.5rem;
+    cursor: pointer;
+    padding: 0.5rem;
+    border-radius: 8px;
+    transition: background 0.2s;
+}
+
+.icon-btn:hover {
+    background: rgba(0, 0, 0, 0.05);
+}
+
+.tool-btn {
+    padding: 0.6rem 1.2rem;
+    border: 1px solid #ddd;
+    background: white;
+    border-radius: 8px;
+    cursor: pointer;
+    font-weight: 500;
+    transition: all 0.2s;
+}
+
+.tool-btn:hover {
+    background: #f5f5f5;
+    transform: translateY(-1px);
+}
+
+.tool-btn.primary {
+    background: var(--primary);
+    color: white;
+    border-color: var(--primary);
+}
+
+.tool-btn.primary:hover {
+    background: var(--primary-dark);
+}
+
+.tool-btn.danger {
+    color: var(--danger);
+    border-color: var(--danger);
+}
+
+.tool-btn.danger:hover {
+    background: rgba(239, 71, 111, 0.1);
+}
+
+/* ===== MAIN CONTENT ===== */
+.main-content {
+    flex: 1;
+    display: flex;
+    position: relative;
+    overflow: hidden;
+    /* Contain children */
+}
+
+/* ===== ALBUM SIDEBAR ===== */
+.album-sidebar {
+    position: absolute;
+    left: 0;
+    top: 0;
+    height: 100%;
+    width: 280px;
+    background: white;
+    border-right: 1px solid #e0e0e0;
+    padding: 1.5rem;
+    overflow-y: auto;
+    transition: transform 0.3s ease;
+    z-index: 50;
+}
+
+.album-sidebar.hidden {
+    transform: translateX(-100%);
+}
+
+.sidebar-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 1.5rem;
+}
+
+.sidebar-tabs {
+    display: flex;
+    border-bottom: 2px solid #eee;
+    margin-bottom: 1rem;
+    gap: 0.5rem;
+}
+
+.sidebar-tab {
+    flex: 1;
+    padding: 0.8rem 0.5rem;
+    background: none;
+    border: none;
+    cursor: pointer;
+    font-size: 0.95rem;
+    color: var(--muted);
+    font-weight: 500;
+    transition: all 0.2s;
+    border-bottom: 2px solid transparent;
+}
+
+.sidebar-tab:hover {
+    color: var(--primary);
+    background: rgba(0, 0, 0, 0.02);
+}
+
+.sidebar-tab.active {
+    color: var(--primary);
+    font-weight: 600;
+    border-bottom-color: var(--primary);
+}
+
+.sidebar-header h2 {
+    font-size: 1.2rem;
+    font-weight: 600;
+}
+
+.album-list {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+}
+
+.album-card {
+    padding: 1rem;
+    background: #f9f9f9;
+    border-radius: 12px;
+    border: 2px solid transparent;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.album-card:hover {
+    border-color: var(--primary);
+}
+
+.album-card.active {
+    border-color: var(--primary);
+    background: rgba(122, 90, 248, 0.1);
+}
+
+.album-card__header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 0.5rem;
+}
+
+.album-card__title {
+    font-weight: 600;
+}
+
+.album-label {
+    font-size: 0.75rem;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.album-pages {
+    list-style: none;
+    margin-top: 0.5rem;
+    max-height: 400px;
+    /* Show approximately 5 pages (each ~80px) */
+    overflow-y: auto;
+    overflow-x: hidden;
+}
+
+/* Album Page Item */
+.album-page {
+    padding: 0.8rem 1rem;
+    border-bottom: 1px solid #f0f0f0;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.album-page:hover {
+    background-color: #f9f9f9;
+}
+
+.album-page.active {
+    background-color: #e3f2fd;
+    border-left: 3px solid var(--primary-color);
+}
+
+.album-page h4 {
+    margin: 0 0 0.3rem 0;
+    font-size: 0.95rem;
+    color: #333;
+    font-weight: 500;
+}
+
+.album-page span {
+    font-size: 0.8rem;
+    color: #888;
+}
+
+.page-delete-btn {
+    opacity: 0;
+    transition: opacity 0.2s;
+    background: none;
+    border: none;
+    cursor: pointer;
+    font-size: 1rem;
+    padding: 4px;
+    border-radius: 4px;
+}
+
+.album-page:hover .page-delete-btn {
+    opacity: 1;
+}
+
+.page-delete-btn:hover {
+    background-color: #ffebee;
+    color: #d32f2f;
+}
+
+/* ===== BOOK WRAPPER ===== */
+.book-wrapper {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 0.5rem;
+    /* Transparent - only show the body background image */
+    background: transparent;
+    width: 100%;
+    transition: all 0.3s ease;
+    position: relative;
+}
+
+
+
+.book-container {
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    perspective: 2000px;
+    min-height: 600px;
+    /* Add warm glow around the book */
+    filter: drop-shadow(0 10px 40px rgba(255, 200, 100, 0.3));
+}
+
+/* Corner Blockers to reduce flip trigger sensitivity */
+.corner-blockers {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    /* Width/Height will be set by JS to match book dimensions */
+    pointer-events: none;
+    z-index: 9999;
+    /* Very high to ensure it's above book canvas */
+}
+
+.blocker {
+    position: absolute;
+    width: 20px;
+    /* Larger blocker area */
+    height: 20px;
+    pointer-events: auto;
+    /* Block events */
+    /* Block events */
+    /* background: rgba(255, 0, 0, 0.2); Debugging: see the blocked area */
+}
+
+/* 
+   Strategy: Place blockers at the corner but cut out the very tip (5px) 
+   so the mouse can access the underlying book ONLY at the extreme edge.
+   Reducing access zone to 5px
+*/
+
+.blocker-tl {
+    top: 0;
+    left: 0;
+    /* L-shape pointing to top-left corner hole */
+    clip-path: polygon(0 5px, 5px 5px, 5px 0, 100% 0, 100% 100%, 0 100%);
+}
+
+.blocker-tr {
+    top: 0;
+    right: 0;
+    clip-path: polygon(100% 5px, calc(100% - 5px) 5px, calc(100% - 5px) 0, 0 0, 0 100%, 100% 100%);
+}
+
+.blocker-bl {
+    bottom: 0;
+    left: 0;
+    clip-path: polygon(0 calc(100% - 5px), 5px calc(100% - 5px), 5px 100%, 100% 100%, 100% 0, 0 0);
+}
+
+.blocker-br {
+    bottom: 0;
+    right: 0;
+    clip-path: polygon(100% calc(100% - 5px), calc(100% - 5px) calc(100% - 5px), calc(100% - 5px) 100%, 0 100%, 0 0, 100% 0);
+}
+
+#book,
+#page-canvas {
+    position: relative;
+    /* Ensure the canvas takes up space and centers contents */
+    width: 100%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.page-content {
+    width: 100%;
+    height: 100%;
+    padding: 2rem;
+    position: relative;
+    overflow: hidden;
+}
+
+.nav-btn:hover {
+    background: rgba(0, 0, 0, 0.8);
+    transform: translateY(-50%) scale(1.1);
+}
+
+.nav-btn:disabled {
+    opacity: 0.3;
+    cursor: not-allowed;
+}
+
+.nav-btn-left {
+    left: -70px;
+}
+
+.nav-btn-right {
+    right: -70px;
+}
+
+/* ===== BOOK INFO ===== */
+.book-info {
+    margin-top: 1.5rem;
+    text-align: center;
+    color: var(--muted);
+    font-size: 0.9rem;
+}
+
+/* ===== PAGE BLOCKS (Content) ===== */
+.page-block {
+    position: absolute;
+    border-radius: 4px;
+    padding: 0;
+    cursor: grab;
+    transition: box-shadow 0.2s;
+    /* Fixed: Make sure content is not clipped so controls are visible outside */
+    overflow: visible !important;
+}
+
+.page-block:hover {
+    box-shadow: 0 0 0 2px var(--primary);
+}
+
+.page-block--dragging {
+    cursor: grabbing;
+    box-shadow: 0 12px 30px rgba(0, 0, 0, 0.15);
+    z-index: 1000 !important;
+}
+
+/* Ensure images fill the block but don't steal pointer events (drag logic on parent) */
+.page-block img {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    /* changed from cover to contain for stickers */
+    pointer-events: none;
+    display: block;
+}
+
+.page-block--photo img {
+    object-fit: cover;
+    /* Photos fill the area */
+}
+
+/* Text blocks shouldn't interfere with their own editing but need drag handle area */
+.page-block--text {
+    background: transparent;
+    padding: 0;
+    width: fit-content !important;
+    height: fit-content !important;
+    min-width: 50px;
+    /* Ensure some minimum clickable area */
+}
+
+/* Sticker layout */
+.page-block--sticker {
+    background: transparent;
+    padding: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+/* Common style for corner controls */
+.block-control {
+    position: absolute;
+    width: 24px;
+    height: 24px;
+    background: white;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2);
+    z-index: 101;
+    /* Higher than content */
+    transition: transform 0.2s, opacity 0.2s;
+    opacity: 0;
+    /* Hidden by default */
+}
+
+/* Show controls on hover OR if we add a 'selected' class later */
+.page-block:hover .block-control,
+.page-block:active .block-control,
+.page-block--selected .block-control {
+    opacity: 1;
+}
+
+.block-control:hover {
+    transform: scale(1.1);
+}
+
+/* Top-Left: Delete */
+.block-delete {
+    top: -12px;
+    left: -12px;
+    background: #ff4757;
+    color: white;
+    border: 2px solid white;
+    font-size: 16px;
+    line-height: 1;
+    font-weight: bold;
+}
+
+/* Top-Right: Rotate */
+.block-rotate {
+    top: -12px;
+    right: -12px;
+    background: #fff;
+    color: #333;
+    border: 2px solid #7a5af8;
+    font-size: 14px;
+    cursor: grab;
+}
+
+.block-rotate:active {
+    cursor: grabbing;
+}
+
+/* Bottom-Right: Resize */
+.block-resize {
+    bottom: -12px;
+    right: -12px;
+    background: #fff;
+    border: 2px solid #7a5af8;
+    cursor: nwse-resize;
+}
+
+/* Hide old styles if present */
+/* Hide old styles if present */
+.block-actions,
+.block-resize-handle {
+    display: none !important;
+}
+
+.page-block:hover .block-resize-handle {
+    opacity: 1;
+    transform: scale(1);
+}
+
+.page-block .block-resize-handle:active {
+    transform: scale(1.1);
+    background: var(--primary);
+}
+
+/* ===== MODAL ===== */
+.modal {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.5);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+}
+
+.modal.hidden {
+    display: none;
+}
+
+.modal-panel {
+    background: white;
+    border-radius: 16px;
+    padding: 2rem;
+    max-width: 500px;
+    width: 90%;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+}
+
+.modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 1.5rem;
+}
+
+.modal-header h3 {
+    font-size: 1.3rem;
+    font-weight: 600;
+}
+
+.modal-close {
+    background: none;
+    border: none;
+    font-size: 1.5rem;
+    cursor: pointer;
+    padding: 0.25rem;
+}
+
+.modal-body {
+    margin-bottom: 1.5rem;
+}
+
+.modal-body label {
+    display: block;
+    margin-bottom: 0.5rem;
+    font-weight: 500;
+    color: var(--muted);
+    font-size: 0.9rem;
+}
+
+.modal-body input,
+.modal-body textarea,
+.modal-body select {
+    width: 100%;
+    padding: 0.75rem;
+    border: 1px solid #ddd;
+    border-radius: 8px;
+    font-family: inherit;
+    font-size: 1rem;
+    margin-bottom: 1rem;
+}
+
+.modal-body textarea {
+    min-height: 100px;
+    resize: vertical;
+}
+
+.modal-actions {
+    display: flex;
+    gap: 0.75rem;
+    justify-content: flex-end;
+}
+
+.ghost-btn,
+.primary-btn {
+    padding: 0.75rem 1.5rem;
+    border-radius: 8px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.ghost-btn {
+    background: #f5f5f5;
+    border: 1px solid #ddd;
+    color: var(--text);
+}
+
+.ghost-btn:hover {
+    background: #e5e5e5;
+}
+
+.primary-btn {
+    background: var(--primary);
+    border: none;
+    color: white;
+}
+
+.primary-btn:hover {
+    background: var(--primary-dark);
+}
+
+/* ===== STICKER PICKER ===== */
+.sticker-grid {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 0.5rem;
+    margin-top: 1rem;
+}
+
+.sticker-option {
+    padding: 1rem;
+    border: 2px solid transparent;
+    border-radius: 8px;
+    background: #f9f9f9;
+    font-size: 2rem;
+    text-align: center;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.sticker-option:hover {
+    border-color: var(--primary);
+    transform: scale(1.1);
+}
+
+.sticker-option.selected {
+    border-color: var(--primary);
+    background: rgba(122, 90, 248, 0.1);
+}
+
+/* ===== RESPONSIVE ===== */
+@media (max-width: 1024px) {
+    .nav-btn-left {
+        left: 10px;
+    }
+
+    .nav-btn-right {
+        right: 10px;
+    }
+}
+
+@media (max-width: 900px) {
+    .top-toolbar {
+        flex-wrap: wrap;
+        padding: 0.75rem 1rem;
+    }
+
+    .toolbar-center {
+        order: 3;
+        width: 100%;
+        justify-content: center;
+        margin-top: 0.5rem;
+    }
+
+    .book-wrapper {
+        padding: 1rem;
+    }
+}
+
+/* ===== STICKER SIDEBAR ===== */
+.sticker-grid-sidebar {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 10px;
+    padding: 10px 0;
+    width: 100%;
+    max-height: 360px;
+    /* 4 rows: (80px height + 10px gap) × 4 = 360px */
+    overflow-y: auto;
+    overflow-x: hidden;
+}
+
+.sticker-item-sidebar {
+    background: #f1f3f5;
+    border: 1px solid #e0e0e0;
+    border-radius: 8px;
+    padding: 10px;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    cursor: grab;
+    transition: all 0.2s;
+    font-size: 2rem;
+    height: 80px;
+    user-select: none;
+}
+
+.sticker-item-sidebar:hover {
+    background: white;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+    transform: translateY(-2px);
+    border-color: var(--primary);
+}
+
+.sticker-item-sidebar img {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    pointer-events: none;
+    /* Let drag event happen on container */
+}
+
+/* Photo specific styles */
+.page-block[data-type="photo"] img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    pointer-events: none;
+    border: 5px solid white;
+    box-shadow: 2px 2px 5px rgba(0, 0, 0, 0.2);
+}
+
+/* Used photo indicator */
+.sticker-item-sidebar.used {
+    border-color: #4CAF50;
+    position: relative;
+    opacity: 0.6;
+}
+
+.sticker-item-sidebar.used::after {
+    content: '✓';
+    position: absolute;
+    bottom: 5px;
+    right: 5px;
+    background: #4CAF50;
+    color: white;
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 12px;
+    font-weight: bold;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+}
+
+/* Back button for sidebar */
+.sidebar-back-btn {
+    margin-right: 10px;
+    background: none;
+    border: none;
+    cursor: pointer;
+    font-size: 1.2rem;
+    color: var(--muted);
+}
+
+.sidebar-back-btn:hover {
+    color: var(--primary);
+}

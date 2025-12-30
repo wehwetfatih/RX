@@ -19,25 +19,12 @@
 <body>
     <div class="app-container">
         <!-- Top Toolbar -->
-        <header class="top-toolbar">
-            <div class="toolbar-left">
-                <button id="toggle-albums-btn" class="icon-btn" title="Albums">📚</button>
-                <h1 class="app-title">MemoryForge</h1>
-            </div>
-            <div class="toolbar-center">
-                <button id="add-photo-btn" class="tool-btn">📷 Photo</button>
-                <button id="add-text-btn" class="tool-btn">✍️ Text</button>
-                <button id="add-sticker-btn" class="tool-btn">⭐ Sticker</button>
-            </div>
-            <div class="toolbar-right">
-                <!-- Page management removed - use album sidebar instead -->
-            </div>
-        </header>
+
 
         <!-- Main Content Area -->
         <main class="main-content">
             <!-- Album Sidebar (collapsible) -->
-            <aside id="album-sidebar" class="album-sidebar">
+            <aside id="album-sidebar" class="album-sidebar hidden">
                 <div id="album-list" class="album-list"></div>
             </aside>
 
@@ -58,9 +45,7 @@
 
                     <button id="next-btn" class="nav-btn nav-btn-right">❯</button>
                 </div>
-                <div class="book-info">
-                    <span id="page-info"></span>
-                </div>
+
             </div>
         </main>
     </div>
@@ -85,7 +70,7 @@
         </div>
     </div>
 
-    <script src="./app.js"></script>
+    <script src="app_fix.js"></script>
 </body>
 
 </html>

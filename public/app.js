@@ -1,18 +1,17 @@
-// DOM Elements for new flip book structure
+// DOM Elements
 const albumListEl = document.getElementById('album-list');
 const albumSidebar = document.getElementById('album-sidebar');
-const toggleAlbumsBtn = document.getElementById('toggle-albums-btn');
-const bookEl = document.getElementById('book');
+// Buttons removed from header, will be handled dynamically or are null
+let toggleAlbumsBtn = document.getElementById('toggle-albums-btn');
+let bookEl = document.getElementById('book');
 const prevBtn = document.getElementById('prev-btn');
 const nextBtn = document.getElementById('next-btn');
-const pageInfoEl = document.getElementById('page-info');
+// const pageInfoEl = document.getElementById('page-info'); // Removed
 const newAlbumBtn = document.getElementById('create-album-btn');
-const addTextBtn = document.getElementById('add-text-btn');
-const addStickerBtn = document.getElementById('add-sticker-btn');
-const addPhotoBtn = document.getElementById('add-photo-btn');
 const photoInput = document.getElementById('photo-input');
 const stickerInput = document.getElementById('sticker-input');
 const fontInput = document.getElementById('font-input');
+
 const modalEl = document.getElementById('modal');
 const modalTitleEl = document.getElementById('modal-title');
 const modalBodyEl = document.getElementById('modal-body');
@@ -204,7 +203,7 @@ class SimpleDB {
 
 const memoryDB = new SimpleDB('MemoryForgeDB');
 
-const flipAudioTemplate = new Audio('./assets/page-flip.mp3');
+const flipAudioTemplate = new Audio('./assets/flip.mp3');
 flipAudioTemplate.preload = 'auto';
 flipAudioTemplate.volume = 0.35;
 
@@ -221,6 +220,20 @@ function playFlipSound() {
 
 // Attach event listeners
 function attachEvents() {
+    // Inject floating toggle button since header is gone
+    if (!toggleAlbumsBtn) {
+        toggleAlbumsBtn = document.createElement('button');
+        toggleAlbumsBtn.innerHTML = '📚';
+        toggleAlbumsBtn.className = 'icon-btn';
+        toggleAlbumsBtn.style.position = 'absolute';
+        toggleAlbumsBtn.style.top = '20px';
+        toggleAlbumsBtn.style.left = '20px';
+        toggleAlbumsBtn.style.zIndex = '1001';
+        toggleAlbumsBtn.style.background = 'white';
+        toggleAlbumsBtn.style.boxShadow = '0 2px 10px rgba(0,0,0,0.1)';
+        document.querySelector('.app-container').appendChild(toggleAlbumsBtn);
+    }
+
     // Toggle album sidebar
     if (toggleAlbumsBtn) {
         toggleAlbumsBtn.addEventListener('click', () => {
@@ -241,33 +254,8 @@ function attachEvents() {
         });
     }
 
-    // Content addition buttons
-    addStickerBtn.addEventListener('click', () => {
-        state.sidebarMode = 'stickers';
-        renderSidebar();
-        if (albumSidebar.classList.contains('hidden')) {
-            albumSidebar.classList.remove('hidden');
-        }
-    });
-
-    // Fix: Add Text Button Listener
-    addTextBtn.addEventListener('click', () => {
-        showAddTextModal();
-    });
-
-    addPhotoBtn.addEventListener('click', (e) => {
-        e.preventDefault();
-        console.log('Toolbar: Photo button clicked');
-        state.sidebarMode = 'photos';
-        try {
-            if (albumSidebar.classList.contains('hidden')) {
-                albumSidebar.classList.remove('hidden');
-            }
-            renderSidebar();
-        } catch (e) {
-            console.error('Error rendering photo sidebar:', e);
-        }
-    });
+    // New Sidebar Logic replaces old button listeners
+    // Old listeners for addTextBtn, addStickerBtn etc are removed because elements are deleted.
 
     photoInput.addEventListener('change', async (event) => {
         const file = event.target.files[0];
@@ -440,6 +428,7 @@ function renderSidebar() {
     };
 
     tabsContainer.appendChild(createTab('albums', 'Albums'));
+    tabsContainer.appendChild(createTab('text', 'Text'));
     tabsContainer.appendChild(createTab('stickers', 'Stickers'));
     tabsContainer.appendChild(createTab('photos', 'Photos'));
 
@@ -455,6 +444,8 @@ function renderSidebar() {
     // 3. Render Content based on mode
     if (state.sidebarMode === 'stickers') {
         renderStickerContent(contentContainer);
+    } else if (state.sidebarMode === 'text') {
+        renderTextContent(contentContainer);
     } else if (state.sidebarMode === 'photos') {
         try {
             renderPhotoContent(contentContainer);
@@ -562,13 +553,60 @@ function renderAlbumListContent(container) {
                 .forEach((page, index) => {
                     const li = document.createElement('li');
                     li.className = `album-page ${page.id === state.activePageId ? 'active' : ''}`;
+                    li.draggable = true; // Enable dragging
+                    li.dataset.pageId = page.id;
+                    li.dataset.albumId = album.id;
 
                     const contentDiv = document.createElement('div');
                     contentDiv.style.flex = '1';
+                    contentDiv.style.pointerEvents = 'none'; // Ensure drag events trigger on li
                     contentDiv.innerHTML = `
                         <h4>${page.title || 'Untitled'}</h4>
                         <span>${index === 0 ? 'Cover' : `Page ${index}`}</span>
                     `;
+
+                    // Drag Events
+                    li.addEventListener('dragstart', (e) => {
+                        e.dataTransfer.effectAllowed = 'move';
+                        e.dataTransfer.setData('text/plain', JSON.stringify({
+                            pageId: page.id,
+                            albumId: album.id,
+                            originIndex: index
+                        }));
+                        li.classList.add('dragging');
+                    });
+
+                    li.addEventListener('dragend', () => {
+                        li.classList.remove('dragging');
+                        document.querySelectorAll('.album-page').forEach(el => el.classList.remove('drag-over'));
+                    });
+
+                    li.addEventListener('dragenter', (e) => {
+                        e.preventDefault();
+                        if (li.dataset.pageId !== page.id) { // Don't highlight self
+                            li.classList.add('drag-over');
+                        }
+                    });
+
+                    li.addEventListener('dragover', (e) => {
+                        e.preventDefault();
+                        e.dataTransfer.dropEffect = 'move';
+                    });
+
+                    li.addEventListener('dragleave', () => {
+                        li.classList.remove('drag-over');
+                    });
+
+                    li.addEventListener('drop', async (e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        li.classList.remove('drag-over');
+                        const data = JSON.parse(e.dataTransfer.getData('text/plain'));
+
+                        if (data.pageId && data.albumId === album.id && data.pageId !== page.id) {
+                            await handlePageReorder(data.pageId, page.id, album.id);
+                        }
+                    });
 
                     // Delete button
                     const deleteBtn = document.createElement('button');
@@ -598,7 +636,59 @@ function renderAlbumListContent(container) {
     });
 }
 
+// Handle page reordering
+async function handlePageReorder(movedPageId, targetPageId, albumId) {
+    const album = state.albums.find(a => a.id === albumId);
+    if (!album || !album.pages) return;
 
+    const pages = [...album.pages].sort((a, b) => a.position - b.position);
+    const movedIndex = pages.findIndex(p => p.id === movedPageId);
+    const targetIndex = pages.findIndex(p => p.id === targetPageId);
+
+    if (movedIndex === -1 || targetIndex === -1) return;
+
+    // Move element in array
+    const [movedPage] = pages.splice(movedIndex, 1);
+    pages.splice(targetIndex, 0, movedPage);
+
+    // Update positions locally
+    pages.forEach((p, index) => {
+        p.position = index;
+    });
+
+    // Update state
+    album.pages = pages;
+
+    // Optimistic UI update
+    renderSidebar();
+    renderCanvas();
+
+    // Persist changes
+    try {
+        await savePageOrder(albumId, pages);
+    } catch (error) {
+        console.error('Failed to save page order:', error);
+        alert('Failed to save new page order');
+        // Revert? (Complex, maybe just reload albums)
+        await loadAlbums();
+    }
+}
+
+async function savePageOrder(albumId, pages) {
+    // Optimized batch update using the new reorder endpoint
+    const pageIds = pages.map(p => p.id);
+
+    try {
+        await apiRequest(`/albums/${albumId}/reorder`, {
+            method: 'PUT',
+            body: { pageIds }
+        });
+        console.log('Page order saved successfully');
+    } catch (error) {
+        console.error('Failed to save page order', error);
+        throw error;
+    }
+}
 
 // Redirect old function call to new logic if called directly
 function renderAlbumList() { renderSidebar(); }
@@ -977,10 +1067,7 @@ function showCanvasError(message) {
 
 // Update page info display
 function updatePageInfo() {
-    if (!pageFlip || !pageInfoEl) return;
-    const current = pageFlip.getCurrentPageIndex();
-    const total = pageFlip.getPageCount();
-    pageInfoEl.textContent = `Page ${current + 1} of ${total}`;
+    // Removed as per request
 }
 
 // Update navigation button states
@@ -1048,7 +1135,7 @@ async function renderCanvas() {
                 <p>Use the album sidebar to add pages.</p>
             </div>
         `;
-        if (pageInfoEl) pageInfoEl.textContent = '';
+        if (typeof pageInfoEl !== 'undefined' && pageInfoEl) pageInfoEl.textContent = '';
         return;
     }
 
@@ -1069,6 +1156,12 @@ async function renderCanvas() {
 
         // Render page content directly
         renderPageContent(pageDiv, page);
+
+        // Add page number (p.n.)
+        const pageNum = document.createElement('div');
+        pageNum.className = 'page-number';
+        pageNum.innerText = index + 1;
+        pageDiv.appendChild(pageNum);
 
         bookEl.appendChild(pageDiv);
     });
@@ -1450,6 +1543,36 @@ function renderPageSide(page, element, { side, isCover }) {
         scheduleSave(page.id);
     }
 }
+
+function updateActivePage(pageId, albumId) {
+    if (state.activeAlbumId !== albumId) {
+        state.activeAlbumId = albumId;
+        state.activePageId = pageId;
+        renderSidebar();
+        renderCanvas().then(() => {
+            // After re-rendering (switching album), flip to the specific page
+            const pages = getAlbumPages();
+            const index = pages.findIndex(p => p.id === pageId);
+            if (index >= 0 && pageFlip) {
+                // Short timeout to ensure pageFlip is ready
+                setTimeout(() => pageFlip.flip(index), 100);
+            }
+        });
+        return;
+    }
+
+    state.activePageId = pageId;
+    renderSidebar();
+
+    if (pageFlip) {
+        const pages = getAlbumPages();
+        const index = pages.findIndex(p => p.id === pageId);
+        if (index >= 0) {
+            pageFlip.flip(index);
+        }
+    }
+}
+
 function getActiveAlbum() {
     return state.albums.find((album) => album.id === state.activeAlbumId);
 }
